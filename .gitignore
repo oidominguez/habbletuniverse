@@ -1,0 +1,29 @@
+# Dependências
+node_modules/
+
+# Build
+dist/
+dist-electron/
+release/
+
+# Logs e caches
+*.log
+npm-debug.log*
+.eslintcache
+.vite/
+
+# SO / editor
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Ambiente
+.env
+.env.*
+dist-tools/
+
+# Builds de teste (o release/ fica em uso enquanto o app roda)
+release-next/

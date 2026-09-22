@@ -1,0 +1,120 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ------------------------------------------------------------------
+   Habblet AddAll — base visual
+   Tema único ("Ink & Mint"): fundo de tinta, superfícies em camadas discretas,
+   um acento menta para o que está vivo ou é ação principal. Sem gradientes
+   chamativos, sem sombras coloridas fora do acento.
+------------------------------------------------------------------- */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: theme('colors.bg');
+  color: theme('colors.fg');
+  font-family: theme('fontFamily.sans');
+  font-feature-settings: 'cv11', 'ss01', 'tnum';
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Números tabulares em qualquer lugar que mostre contagem */
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Barras de scroll finas, no tom da superfície */
+html {
+  scrollbar-width: thin;
+  scrollbar-color: theme('colors.line-strong') transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: theme('colors.line');
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: theme('colors.line-strong');
+  background-clip: padding-box;
+  border: 2px solid transparent;
+}
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Foco visível e consistente sem depender de cada componente */
+:focus-visible {
+  outline: 2px solid theme('colors.accent');
+  outline-offset: 1px;
+  border-radius: 6px;
+}
+
+/* Webview ocupa o espaço disponível */
+webview {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+/* Marca: um "H" em pixel art feito só com box-shadow (identidade, sem imagem) */
+.brand-pixel {
+  position: relative;
+  width: 22px;
+  height: 22px;
+}
+.brand-pixel::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 4px;
+  height: 4px;
+  background: theme('colors.accent');
+  /* colunas da esquerda e direita + barra do meio, em grade 5x5 de 4px */
+  box-shadow:
+    0 4px 0 theme('colors.accent'), 0 8px 0 theme('colors.accent'), 0 12px 0 theme('colors.accent'), 0 16px 0 theme('colors.accent'),
+    16px 0 0 theme('colors.accent'), 16px 4px 0 theme('colors.accent'), 16px 8px 0 theme('colors.accent'), 16px 12px 0 theme('colors.accent'), 16px 16px 0 theme('colors.accent'),
+    4px 8px 0 theme('colors.accent'), 8px 8px 0 theme('colors.accent'), 12px 8px 0 theme('colors.accent'),
+    8px 4px 0 theme('colors.accent-strong');
+}
+
+/* Grade sutil no estado vazio (lembra o piso isométrico do jogo sem imitar) */
+.empty-grid {
+  background-image:
+    linear-gradient(theme('colors.line') 1px, transparent 1px),
+    linear-gradient(90deg, theme('colors.line') 1px, transparent 1px);
+  background-size: 28px 28px;
+  mask-image: radial-gradient(ellipse at center, rgba(0, 0, 0, 0.55), transparent 70%);
+  -webkit-mask-image: radial-gradient(ellipse at center, rgba(0, 0, 0, 0.55), transparent 70%);
+}
+
+/* Botões e controles: transições curtas por padrão */
+button,
+input,
+select,
+textarea {
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease,
+    opacity 120ms ease;
+}

@@ -1,0 +1,17 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": [
+      "node"
+    ]
+  },
+  "include": [
+    "src",
+    "shared",
+    "tests",
+    "vitest.config.ts",
+    "electron/crowd-proxy.ts",
+    "electron/headless-protocol.ts",
+    "electron/proxy-url.ts"
+  ]
+}

@@ -1,0 +1,108 @@
+{
+  "name": "habblet-addall",
+  "version": "1.0.0",
+  "private": true,
+  "main": "dist-electron/electron/main.js",
+  "author": "Habblet AddAll",
+  "description": "Cliente/launcher para o Habblet (Electron + React) que intercepta o protocolo do jogo: addons por protocolo, aba Jogo, sniffer e controle de várias contas",
+  "overrides": {
+    "tar": ">=7.5.3",
+    "esbuild": ">=0.25.0"
+  },
+  "scripts": {
+    "clean": "node -e \"for (const d of ['dist','dist-electron']) require('fs').rmSync(d,{recursive:true,force:true})\"",
+    "build:electron": "tsc -p tsconfig.electron.json",
+    "dev:electron-wait": "wait-on http://localhost:5173 && electron .",
+    "stamp": "node tools/build-stamp.mjs build",
+    "stamp:dev": "node tools/build-stamp.mjs dev",
+    "dev": "npm run stamp:dev && npm run build:electron && concurrently -k \"npm run vite:dev\" \"npm run dev:electron-wait\"",
+    "vite:dev": "cross-env VITE_CJS_IGNORE_WARNING=true vite",
+    "build": "npm run clean && npm run stamp && cross-env VITE_CJS_IGNORE_WARNING=true vite build && npm run build:electron",
+    "start": "npm run build && electron .",
+    "verify:pack": "node tools/verify-pack.mjs",
+    "pack": "node tools/verify-pack.mjs --pre && npm run build && electron-builder --dir && node tools/verify-pack.mjs",
+    "dist": "node tools/verify-pack.mjs --pre && npm run build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder && node tools/verify-pack.mjs",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.electron.json --noEmit && tsc -p tsconfig.test.json --noEmit",
+    "format": "prettier --write \"src/**/*.{ts,tsx,css}\" \"electron/**/*.ts\" \"shared/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\" \"electron/**/*.ts\" \"shared/**/*.ts\"",
+    "proto:replay": "esbuild tools/protocol/replay_state.ts --bundle --platform=node --format=cjs --log-level=warning --outfile=dist-tools/replay_state.cjs && node dist-tools/replay_state.cjs",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check": "npm run lint && npm run typecheck && npm run test"
+  },
+  "build": {
+    "appId": "com.habblet.addall",
+    "productName": "Habblet AddAll",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerLanguages": [
+        "pt_BR",
+        "en_US"
+      ],
+      "shortcutName": "Habblet AddAll"
+    }
+  },
+  "dependencies": {
+    "@fontsource-variable/inter": "^5.3.0",
+    "@fontsource/jetbrains-mono": "^5.3.0",
+    "electron-store": "^8.2.0",
+    "https-proxy-agent": "^7.0.6",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "socks-proxy-agent": "^8.0.5",
+    "ws": "^8.21.3"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^20.10.0",
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "@types/ws": "^8.18.1",
+    "@vitejs/plugin-react": "^4.2.0",
+    "autoprefixer": "^10.4.16",
+    "concurrently": "^8.2.2",
+    "cross-env": "^7.0.3",
+    "electron": "^35.7.5",
+    "electron-builder": "^24.9.1",
+    "eslint": "^10.10.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.6",
+    "globals": "^17.12.0",
+    "postcss": "^8.4.32",
+    "prettier": "^3.9.6",
+    "tailwindcss": "^3.4.0",
+    "typescript": "^5.3.0",
+    "typescript-eslint": "^8.70.0",
+    "vite": "^5.0.0",
+    "vitest": "^2.1.9",
+    "wait-on": "^7.2.0"
+  }
+}
