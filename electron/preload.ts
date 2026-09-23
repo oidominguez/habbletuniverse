@@ -2,7 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 import { IPC } from '../shared/ipc';
 import type { HabbletApi } from '../shared/ipc';
 import type { SettingsPatch } from '../shared/addon-config';
-import type { CaptchaSolverProvider, CrowdAccountInput, CrowdAccountPatch, CrowdNetworkSettings, HeadlessEvent, InterceptedHandshake, ProxyPhase, TorSettings, TurnstileSolveRequest } from '../shared/crowd';
+import type { CaptchaSolverProvider, CrowdAccountInput, CrowdAccountPatch, CrowdNetworkSettings, HeadlessEvent, InterceptedHandshake, ProxyPhase, ProxyPoolPatch, TorSettings, TurnstileSolveRequest } from '../shared/crowd';
 
 /**
  * Ponte segura entre o renderer e o processo principal.
@@ -57,6 +57,11 @@ const api: HabbletApi = {
     credentials: (id: string) => ipcRenderer.invoke(IPC.CROWD_CREDENTIALS, id),
     applyProxy: (id: string, phase?: ProxyPhase) => ipcRenderer.invoke(IPC.CROWD_PROXY_APPLY, id, phase ?? 'login'),
     testProxy: (id: string) => ipcRenderer.invoke(IPC.CROWD_PROXY_TEST, id),
+    listProxies: () => ipcRenderer.invoke(IPC.CROWD_PROXIES_LIST),
+    addProxies: (text: string) => ipcRenderer.invoke(IPC.CROWD_PROXIES_ADD, text),
+    updateProxy: (id: string, patch: ProxyPoolPatch) => ipcRenderer.invoke(IPC.CROWD_PROXIES_UPDATE, id, patch),
+    removeProxy: (id: string) => ipcRenderer.invoke(IPC.CROWD_PROXIES_REMOVE, id),
+    testPoolProxy: (id: string) => ipcRenderer.invoke(IPC.CROWD_PROXIES_TEST, id),
     getSolver: () => ipcRenderer.invoke(IPC.CROWD_SOLVER_GET),
     setSolver: (provider: CaptchaSolverProvider, apiKey: string | null) => ipcRenderer.invoke(IPC.CROWD_SOLVER_SET, provider, apiKey),
     solveTurnstile: (req: TurnstileSolveRequest) => ipcRenderer.invoke(IPC.CROWD_SOLVER_SOLVE, req),

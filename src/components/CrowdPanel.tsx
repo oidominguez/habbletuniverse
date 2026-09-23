@@ -1,13 +1,16 @@
 import { useState } from 'react';
-import type { ReactNode } from 'react';
 import type { AddonId } from '../../shared/addon-config';
-import type { CaptchaSolverProvider, CaptchaSolverSettings, CrowdAccount, CrowdNetworkSettings, CrowdSessionStatus, TorSettings, TorStatus, TrafficReport } from '../../shared/crowd';
+import type { CaptchaSolverProvider, CaptchaSolverSettings, CrowdAccount, CrowdNetworkSettings, CrowdSessionStatus, ProxyPoolEntry, ProxyPoolStatus, ProxyTestResult, TorSettings, TorStatus, TrafficReport } from '../../shared/crowd';
 import type { CrowdCommand, CrowdSnapshot } from '../crowd/CrowdManager';
 import { ADDONS } from '../addons/registry';
 import { Switch } from './ConfigInputs';
 import { Button, Card, Chip, Dot, EmptyState, Eyebrow, FormRow, IconButton, Input, Select, SegmentedTabs, SettingRow, StatusPill, TextArea, Toolbar } from './ui';
 import { cx } from './cx';
 import { cleanName, fmtBytes } from './text';
+import { Avatar } from './Avatar';
+import ProxyPoolView from './ProxyPoolView';
+import { poolOptionText, sortPool } from './proxyPoolUi';
+import CommandBar from './CommandBar';
 import type { Tone } from './ui';
 
 export interface CrowdPanelProps {
@@ -35,6 +38,17 @@ export interface CrowdPanelProps {
   onTestProxy: (id: string) => Promise<void>;
   /** Distribui uma lista de proxies (um por linha) entre as contas, em ordem. */
   onDistributeProxies: (proxies: string[]) => Promise<void>;
+  /** Pool de proxies: lista colada de uma vez; cada conta escolhe um item no seletor da linha dela. */
+  proxies: ProxyPoolEntry[];
+  onAddProxies: (text: string) => Promise<void>;
+  onRemoveProxy: (id: string) => Promise<void>;
+  onSetProxyStatus: (id: string, status: ProxyPoolStatus, note?: string) => Promise<void>;
+  onSetProxyLabel: (id: string, label: string) => Promise<void>;
+  onTestPoolProxy: (id: string) => Promise<ProxyTestResult>;
+  /** Liga a conta a um item do pool (null = sai do pool). Vale na próxima conexão. */
+  onAssignProxy: (accountId: string, proxyId: string | null) => Promise<void>;
+  /** Dá um proxy livre do pool a cada conta sem proxy. */
+  onAutoAssignProxies: () => Promise<void>;
   /** Resolvedor de captcha. */
   solver: CaptchaSolverSettings;
   onSetSolver: (provider: CaptchaSolverProvider, apiKey: string | null) => Promise<void>;
@@ -69,6 +83,7 @@ const STATUS: Record<CrowdSessionStatus, { label: string; tone: Tone; solid?: bo
   error: { label: 'erro', tone: 'danger' },
 };
 
+
 /** Largura mínima das duas colunas de trabalho; abaixo disso o dock ganha rolagem horizontal em vez de esmagar os controles. */
 const COL_ACCOUNTS = 'minmax(440px, 1fr)';
 const COL_COMMANDS = 'minmax(340px, 0.9fr)';
@@ -79,30 +94,12 @@ export default function CrowdPanel(p: CrowdPanelProps) {
   const [pass, setPass] = useState('');
   const [label, setLabel] = useState('');
   const [adding, setAdding] = useState(false);
-  const [roomId, setRoomId] = useState('');
-  const [groupId, setGroupId] = useState('');
-  const [lookCode, setLookCode] = useState('');
-  const [follow, setFollow] = useState('');
-  const [chat, setChat] = useState('');
-  const [whisperNick, setWhisperNick] = useState('');
-  const [whisperText, setWhisperText] = useState('');
-  const [friendName, setFriendName] = useState('');
-  const [targetNick, setTargetNick] = useState('');
-  const [walkX, setWalkX] = useState('');
-  const [walkY, setWalkY] = useState('');
-  const [cmdPick, setCmdPick] = useState('');
-  const [cmdArgs, setCmdArgs] = useState('');
-  const [consoleName, setConsoleName] = useState('');
-  const [consoleText, setConsoleText] = useState('');
-  const [inviteText, setInviteText] = useState('');
-  const [inviteOnlineOnly, setInviteOnlineOnly] = useState(true);
-  /** Contas alvo dos comandos; vazio = todas. */
+  /** Contas alvo dos comandos (escolhidas clicando nas linhas); vazio = todas as online e não pausadas. */
   const [targets, setTargets] = useState<string[]>([]);
   const targetIds = targets.length ? targets : null;
   const run = (cmd: CrowdCommand) => p.onCommand(targetIds, cmd);
   const toggleTarget = (id: string) => setTargets((t) => (t.includes(id) ? t.filter((x) => x !== id) : [...t, id]));
-  const num = (v: string) => { const n = parseInt(v, 10); return Number.isNaN(n) ? null : n; };
-  const [view, setView] = useState<'accounts' | 'logs' | 'proxies'>('accounts');
+  const [view, setView] = useState<'accounts' | 'proxies' | 'network' | 'logs'>('accounts');
   const [proxyDraft, setProxyDraft] = useState<Record<string, string>>({});
   const [pool, setPool] = useState('');
   const [newProxy, setNewProxy] = useState('');
@@ -110,6 +107,10 @@ export default function CrowdPanel(p: CrowdPanelProps) {
   const [hostsDraft, setHostsDraft] = useState<string | null>(null);
 
   const byId = new Map(p.crowd.sessions.map((s) => [s.id, s]));
+  /** Quem usa cada item do pool (nicks), para o seletor e a lista mostrarem. */
+  const poolUsers = new Map<string, string[]>();
+  for (const a of p.accounts) if (a.proxyId) poolUsers.set(a.proxyId, [...(poolUsers.get(a.proxyId) ?? []), a.username]);
+  const poolSorted = sortPool(p.proxies);
   const trafficById = new Map(p.traffic.map((t) => [t.accountId, t]));
   const headlessCount = p.crowd.sessions.filter((s) => s.transport === 'headless').length;
   const online = p.crowd.sessions.filter((s) => s.status === 'online').length;
@@ -144,7 +145,7 @@ export default function CrowdPanel(p: CrowdPanelProps) {
         {/* Coluna 1: contas / proxies / log */}
         <div className="flex min-h-0 min-w-0 flex-col border-r border-line">
           <Toolbar className="border-b border-line px-3 py-2">
-            <SegmentedTabs value={view} onChange={setView} items={[{ value: 'accounts', label: 'Contas' }, { value: 'proxies', label: 'Proxies' }, { value: 'logs', label: 'Log' }]} />
+            <SegmentedTabs value={view} onChange={setView} items={[{ value: 'accounts', label: 'Contas' }, { value: 'proxies', label: <>Proxies{p.proxies.length > 0 && <span className="tnum ml-1 font-mono text-[10px] text-dim">{p.proxies.length}</span>}</> }, { value: 'network', label: 'Rede' }, { value: 'logs', label: 'Log' }]} />
             <span className="min-w-0 truncate text-[11px] text-dim" title={`${online} online · ${p.crowd.sessions.length} de ${p.accounts.length} conectadas${headlessCount ? ` · ${headlessCount} sem tela` : ''}`}>
               <span className="tnum text-accent">{online}</span> online · <span className="tnum">{p.crowd.sessions.length}</span>/<span className="tnum">{p.accounts.length}</span> conectadas
               {headlessCount > 0 && <> · <span className="tnum text-info">{headlessCount}</span> sem tela</>}
@@ -175,8 +176,22 @@ export default function CrowdPanel(p: CrowdPanelProps) {
                       const st = s ? STATUS[s.status] : STATUS.offline;
                       const proxyText = a.proxy ?? (p.tor.enabled ? 'via Tor' : 'sem proxy (IP real)');
                       const queuePos = queued.indexOf(a.id);
+                      // Opção "fora do pool": o que a conta tem sem o pool (proxy próprio digitado, Tor ou IP real).
+                      const noPoolText = a.hasOwnProxy ? `proxy próprio${a.proxyId ? '' : `: ${a.proxy}`}` : p.tor.enabled ? 'via Tor' : 'sem proxy (IP real)';
+                      const chosen = a.proxyId ? p.proxies.find((x) => x.id === a.proxyId) : undefined;
+                      const selected = targets.includes(a.id);
                       return (
-                        <li key={a.id} className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 border-b border-line/60 px-3 py-2 odd:bg-bg/30">
+                        <li
+                          key={a.id}
+                          onClick={() => { if (s) toggleTarget(a.id); }}
+                          aria-selected={selected || undefined}
+                          title={s ? (selected ? 'Alvo dos comandos (clique para tirar)' : 'Clique para escolher esta conta como alvo dos comandos') : undefined}
+                          className={cx('grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-x-3 border-b border-line/60 px-3 py-2 transition-colors', s && 'cursor-pointer', selected ? 'bg-accent/[0.07]' : 'odd:bg-bg/30 hover:bg-fg/[0.03]')}
+                        >
+                          <span className="relative mt-0.5">
+                            <Avatar name={a.username} figure={s?.figure} size={30} ring dim={!s || s.status === 'offline' || s.status === 'error'} title={s?.figure ? 'foto pelo visual da conta (2725)' : 'foto pelo nick (imager do fansite)'} />
+                            {selected && <span className="absolute -right-0.5 -top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-accent text-[9px] font-bold text-accent-ink" aria-hidden>✓</span>}
+                          </span>
                           <div className="min-w-0">
                             <div className="flex min-w-0 items-center gap-2">
                               <StatusPill tone={st.tone} solid={st.solid}>{st.label}</StatusPill>
@@ -199,14 +214,30 @@ export default function CrowdPanel(p: CrowdPanelProps) {
                                 ? `${s.roomId !== null ? `${cleanName(s.roomName) || '#' + s.roomId} · ${s.roomUsers} na sala` : 'fora de quarto'} · ${s.sent} pedidos${s.pendingRequests ? ` · ${s.pendingRequests} pendentes` : ''}`
                                 : s.detail) : queuePos >= 0 ? `na fila de conexão (${queuePos + 1}ª de ${queued.length})` : 'desconectada'}
                             </div>
-                            <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[10px]">
-                              <span className={cx('min-w-0 truncate', a.proxy ? 'text-fg-2' : p.tor.enabled ? 'text-info' : 'text-warn')} title={proxyText}>{proxyText}</span>
+                            <div className="mt-1 flex min-w-0 items-center gap-1.5 text-[10px]" onClick={(e) => e.stopPropagation()}>
+                              {p.proxies.length > 0 ? (
+                                <Select
+                                  size="sm"
+                                  mono
+                                  value={a.proxyId ?? ''}
+                                  onChange={(e) => void p.onAssignProxy(a.id, e.target.value || null)}
+                                  className={cx('min-w-0 flex-1', chosen?.status === 'blocked' && 'border-danger/60 text-danger')}
+                                  title={s ? `Proxy com que a conta vai conectar da próxima vez (agora: ${proxyText}). Mudar exige reconectar.` : `Proxy com que a conta vai conectar: ${proxyText}`}
+                                >
+                                  <option value="">{noPoolText}</option>
+                                  {poolSorted.map((x) => (
+                                    <option key={x.id} value={x.id}>{poolOptionText(x, (poolUsers.get(x.id) ?? []).filter((u) => u !== a.username))}</option>
+                                  ))}
+                                </Select>
+                              ) : (
+                                <span className={cx('min-w-0 truncate', a.proxy ? 'text-fg-2' : p.tor.enabled ? 'text-info' : 'text-warn')} title={proxyText}>{proxyText}</span>
+                              )}
                               {s && s.status !== 'offline' && (
                                 <button type="button" onClick={() => void p.onTestProxy(a.id)} className="shrink-0 whitespace-nowrap rounded px-1 text-[10px] text-muted hover:text-accent" title="Descobrir o IP de saída desta conta">testar IP</button>
                               )}
                             </div>
                           </div>
-                          <div className="flex items-start gap-1 pt-px">
+                          <div className="flex items-start gap-1 pt-px" onClick={(e) => e.stopPropagation()}>
                             <Button
                               size="sm"
                               active={a.autoConnect}
@@ -240,6 +271,18 @@ export default function CrowdPanel(p: CrowdPanelProps) {
               </FormRow>
             </>
           ) : view === 'proxies' ? (
+            <ProxyPoolView
+              proxies={p.proxies}
+              accounts={p.accounts}
+              onAddProxies={p.onAddProxies}
+              onRemoveProxy={p.onRemoveProxy}
+              onSetProxyStatus={p.onSetProxyStatus}
+              onSetProxyLabel={p.onSetProxyLabel}
+              onTestPoolProxy={p.onTestPoolProxy}
+              onAutoAssignProxies={p.onAutoAssignProxies}
+              showToast={p.showToast}
+            />
+          ) : view === 'network' ? (
             <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
               <Card
                 title="Sem tela (protocolo puro)"
@@ -319,7 +362,7 @@ export default function CrowdPanel(p: CrowdPanelProps) {
               </Card>
               <Card
                 title="Proxy por conta"
-                description={<>Todo o tráfego da conta (site e WebSocket do jogo) sai pelo proxy dela. Formatos: <span className="font-mono">socks5://user:pass@host:porta</span>, <span className="font-mono">http://host:porta</span>. Vazio = IP real. Aplicado ao conectar; mudar exige reconectar. Em residencial rotativo (Bright Data, Decodo, Oxylabs, IPRoyal) o app acrescenta sozinho uma sessão fixa por conta no usuário do proxy, para login, hotel e jogo saírem pelo mesmo IP.</>}
+                description={<>Proxy próprio, digitado direto na conta (sem passar pelo pool). Todo o tráfego da conta (site e WebSocket do jogo) sai por ele. Formatos: <span className="font-mono">socks5://user:pass@host:porta</span>, <span className="font-mono">http://host:porta</span>. Vazio = IP real. Aplicado ao conectar; mudar exige reconectar. Se a conta tem um item do pool escolhido, o pool tem prioridade. Em residencial rotativo (Bright Data, Decodo, Oxylabs, IPRoyal) o app acrescenta sozinho uma sessão fixa por conta no usuário do proxy, para login, hotel e jogo saírem pelo mesmo IP.</>}
               >
                 <ul className="space-y-1.5">
                   {p.accounts.map((a) => (
@@ -329,11 +372,11 @@ export default function CrowdPanel(p: CrowdPanelProps) {
                         mono
                         value={proxyDraft[a.id] ?? ''}
                         onChange={(e) => setProxyDraft((d) => ({ ...d, [a.id]: e.target.value }))}
-                        placeholder={a.proxy ?? 'sem proxy'}
+                        placeholder={a.proxyId ? `usando o pool (${a.proxy ?? '?'})` : a.proxy ?? 'sem proxy'}
                         className="flex-1"
                       />
                       <Button onClick={() => { void p.onSetProxy(a.id, proxyDraft[a.id] ?? ''); setProxyDraft((d) => ({ ...d, [a.id]: '' })); }}>Salvar</Button>
-                      {a.proxy && <IconButton onClick={() => void p.onSetProxy(a.id, '')} className="hover:text-danger" title="Remover proxy">×</IconButton>}
+                      {a.hasOwnProxy && <IconButton onClick={() => void p.onSetProxy(a.id, '')} className="hover:text-danger" title="Remover o proxy próprio">×</IconButton>}
                     </li>
                   ))}
                 </ul>
@@ -397,126 +440,33 @@ export default function CrowdPanel(p: CrowdPanelProps) {
           )}
         </div>
 
-        {/* Coluna 2: comandos em massa + addons */}
-        <div className="flex min-h-0 min-w-0 flex-col gap-3 overflow-y-auto border-r border-line p-3">
-          <Card title="Alvo dos comandos" description={targets.length ? `${targets.length} conta(s) selecionada(s)` : `todas as ${online} online e não pausadas`}>
-            <Toolbar className="gap-1">
-              <Button size="sm" active={targets.length === 0} onClick={() => setTargets([])}>Todas</Button>
-              {p.crowd.sessions.map((s) => {
-                const on = targets.includes(s.id);
-                return (
-                  <Button
-                    key={s.id}
-                    size="sm"
-                    active={on}
-                    onClick={() => toggleTarget(s.id)}
-                    title={`${s.status}${s.paused ? ' · pausada' : ''}`}
-                    className={cx('max-w-[160px]', (s.status !== 'online' || s.paused) && 'opacity-50')}
-                  >
-                    <Dot tone={s.status === 'online' ? 'accent' : 'neutral'} />
-                    <span className="truncate">{s.account.username}</span>
-                  </Button>
-                );
-              })}
-            </Toolbar>
-          </Card>
+        {/* Coluna 2: alvo, barra de comando e addons */}
+        <div className="flex min-h-0 min-w-0 flex-col gap-4 overflow-y-auto border-r border-line p-4">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Eyebrow>Alvo</Eyebrow>
+            <Button size="sm" active={targets.length === 0} onClick={() => setTargets([])} title="Todas as contas online e não pausadas">Todas</Button>
+            {targets.map((id) => {
+              const sess = byId.get(id);
+              const name = sess?.account.username ?? p.accounts.find((a) => a.id === id)?.username ?? id;
+              return (
+                <Button key={id} size="sm" active onClick={() => toggleTarget(id)} title="Tirar do alvo" className="max-w-[160px]">
+                  <span className="truncate">{name}</span> ×
+                </Button>
+              );
+            })}
+            <span className="ml-auto text-[11px] text-dim">{targets.length ? `${targets.length} conta(s)` : `${online} online`} · escolha clicando nas contas</span>
+          </div>
 
-          <Card title="Postura" description={`${seated} sentada(s) · ${lying} deitada(s)${searching ? ` · ${searching} procurando lugar` : ''}${p.hasFurniCatalog ? '' : ' · sem furnidata: só casas onde alguém já foi visto sentado'}`}>
-            <Toolbar>
-              <Button variant="primary" onClick={() => run({ kind: 'posture', posture: 'sit' })} title="Cada conta alvo procura um mobi sentável livre e alcançável no quarto em que está (lê os mobis do 1778 e o furnidata do hotel), anda até ele (3320) e o servidor a senta. Duas contas não disputam a mesma casa.">Todas sentadas</Button>
-              <Button onClick={() => run({ kind: 'posture', posture: 'lay' })} title="Mesma coisa com mobis deitáveis (camas, sofás-cama).">Todas deitadas</Button>
-              <Button onClick={() => run({ kind: 'standUp' })} title="Quem está sentada/deitada dá um passo para uma casa vizinha livre.">Levantar</Button>
-              <Button variant="ghost" onClick={() => run({ kind: 'cancelPosture' })} title="Para a procura de lugar; quem já sentou fica.">Parar de procurar</Button>
-            </Toolbar>
-          </Card>
+          <CommandBar
+            serverCommands={p.crowd.commands}
+            targetLabel={targets.length ? `${targets.length} conta(s) escolhida(s)` : 'todas as online'}
+            onRun={run}
+            showToast={p.showToast}
+          />
 
-          <Card title="Movimento" description="posição vem do 374/1640; andar = 3320, olhar = 3301">
-            <Stack>
-              <FormRow>
-                <Input value={targetNick} onChange={(e) => setTargetNick(e.target.value)} placeholder="nick na sala" className="flex-1 basis-32" />
-                <Button onClick={() => targetNick.trim() && run({ kind: 'goTo', name: targetNick.trim() })} title="Anda até a casa livre ao lado dele, uma vez">Ir até</Button>
-                <Button onClick={() => targetNick.trim() && run({ kind: 'pin', name: targetNick.trim() })} title="Persegue em tempo real; se ele trocar de quarto, dá follow">Fixar</Button>
-              </FormRow>
-              <Toolbar>
-                <Button onClick={() => run({ kind: 'unpin' })}>Soltar alvo</Button>
-                <Button onClick={() => targetNick.trim() && run({ kind: 'clickUser', name: targetNick.trim() })} title="Reproduz o clique no avatar (3301+431+2091+2138)">Clicar</Button>
-                <Button onClick={() => targetNick.trim() && run({ kind: 'respect', name: targetNick.trim() })} title="Respeita o usuário (2694; cada conta tem cota diária). A confirmação do servidor (2815) aparece no Log da conta.">Respeitar</Button>
-                <Button onClick={() => targetNick.trim() && run({ kind: 'requestFriend', name: targetNick.trim() })}>Pedir amizade</Button>
-                <Button onClick={() => targetNick.trim() && run({ kind: 'copyLook', name: targetNick.trim() })} title="Pede o perfil da pessoa ao servidor pelo nick (2249) e aplica o visual que vem nele (2730). Funciona com a pessoa offline e mesmo se ela bloqueou a cópia no cliente.">Copiar visual</Button>
-              </Toolbar>
-              <FormRow>
-                <Input mono value={lookCode} onChange={(e) => setLookCode(e.target.value)} placeholder="código do visual (hd-180-1.hr-828-61…)" className="flex-1 basis-56" />
-                <Button onClick={() => lookCode.trim() && run({ kind: 'setLook', figure: lookCode.trim() })} title="Aplica esta string de visual em cada conta alvo, com o gênero atual dela">Aplicar visual</Button>
-              </FormRow>
-              <FormRow>
-                <Input mono value={walkX} onChange={(e) => setWalkX(e.target.value)} placeholder="x" className="w-14" />
-                <Input mono value={walkY} onChange={(e) => setWalkY(e.target.value)} placeholder="y" className="w-14" />
-                <Button onClick={() => { const x = num(walkX), y = num(walkY); if (x !== null && y !== null) run({ kind: 'walk', x, y }); }}>Andar</Button>
-                <Button onClick={() => { const x = num(walkX), y = num(walkY); if (x !== null && y !== null) run({ kind: 'look', x, y }); }}>Olhar</Button>
-              </FormRow>
-            </Stack>
-          </Card>
-
-          <Card title="Quarto">
-            <Stack>
-              <FormRow>
-                <Input mono value={roomId} onChange={(e) => setRoomId(e.target.value)} placeholder="id do quarto" className="w-32" />
-                <Button onClick={() => { const id = num(roomId); if (id !== null) run({ kind: 'enterRoom', roomId: id }); }}>Entrar</Button>
-                <Button onClick={() => run({ kind: 'rateRoom' })} title="Dá nota ao quarto em que cada conta está (3582). Cada conta só pode dar nota uma vez por quarto.">Dar nota</Button>
-              </FormRow>
-              <FormRow>
-                <Input mono value={groupId} onChange={(e) => setGroupId(e.target.value)} placeholder="id do grupo" className="w-32" />
-                <Button onClick={() => { const id = num(groupId); if (id !== null) run({ kind: 'joinGroup', groupId: id }); }} title="Pede a entrada no grupo (998). Grupo fechado gera um pedido para o dono aprovar; recusa aparece no Log.">Entrar no grupo</Button>
-              </FormRow>
-              <FormRow>
-                <Input value={follow} onChange={(e) => setFollow(e.target.value)} placeholder="nick para seguir até o quarto dele" className="flex-1 basis-40" />
-                <Button onClick={() => follow.trim() && run({ kind: 'followFriend', name: follow.trim() })} title="3997 se for amigo da conta; senão o comando :follow">Seguir</Button>
-              </FormRow>
-            </Stack>
-          </Card>
-
-          <Card title="Fala" description="1314 falar · 2085 gritar (a confirmar) · 1543 sussurrar">
-            <Stack>
-              <FormRow>
-                <Input value={chat} onChange={(e) => setChat(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && chat.trim()) { run({ kind: 'chat', text: chat.trim() }); setChat(''); } }} placeholder="falar / comando (:sit, :dance…)" className="flex-1 basis-40" />
-                <Button onClick={() => { if (chat.trim()) { run({ kind: 'chat', text: chat.trim() }); setChat(''); } }}>Falar</Button>
-                <Button onClick={() => { if (chat.trim()) { run({ kind: 'shout', text: chat.trim() }); setChat(''); } }}>Gritar</Button>
-              </FormRow>
-              <FormRow>
-                <Input value={whisperNick} onChange={(e) => setWhisperNick(e.target.value)} placeholder="nick" className="w-28" />
-                <Input value={whisperText} onChange={(e) => setWhisperText(e.target.value)} placeholder="sussurro" className="flex-1 basis-32" />
-                <Button onClick={() => whisperNick.trim() && whisperText.trim() && run({ kind: 'whisper', nick: whisperNick.trim(), text: whisperText.trim() })}>Sussurrar</Button>
-              </FormRow>
-              <FormRow>
-                <Select mono value={cmdPick} onChange={(e) => setCmdPick(e.target.value)} className="w-36" title="Comandos que o servidor anunciou às contas (pacote 432)">
-                  <option value="">comando…</option>
-                  {p.crowd.commands.map((c) => <option key={c} value={c}>{c}</option>)}
-                </Select>
-                <Input value={cmdArgs} onChange={(e) => setCmdArgs(e.target.value)} placeholder="argumentos" className="flex-1 basis-28" />
-                <Button onClick={() => { if (cmdPick) run({ kind: 'chat', text: `${cmdPick} ${cmdArgs.trim()}`.trim() }); }}>Enviar</Button>
-              </FormRow>
-            </Stack>
-          </Card>
-
-          <Card title="Amizade e console" description="3157 pedir · 137 aceitar · 3567 console (só para amigos)">
-            <Stack>
-              <FormRow>
-                <Input value={friendName} onChange={(e) => setFriendName(e.target.value)} placeholder="pedir amizade a…" className="flex-1 basis-32" />
-                <Button onClick={() => friendName.trim() && run({ kind: 'requestFriend', name: friendName.trim() })}>Pedir</Button>
-                <Button onClick={() => run({ kind: 'acceptPending' })} title="Aceita todos os pedidos pendentes de cada conta alvo">Aceitar pendentes</Button>
-              </FormRow>
-              <FormRow>
-                <Input value={consoleName} onChange={(e) => setConsoleName(e.target.value)} placeholder="amigo" className="w-28" />
-                <Input value={consoleText} onChange={(e) => setConsoleText(e.target.value)} placeholder="mensagem no console" className="flex-1 basis-32" />
-                <Button onClick={() => consoleName.trim() && consoleText.trim() && run({ kind: 'console', name: consoleName.trim(), text: consoleText.trim() })}>Console</Button>
-              </FormRow>
-              <FormRow>
-                <Input value={inviteText} onChange={(e) => setInviteText(e.target.value)} placeholder="mensagem do convite (ex.: vem pro meu quarto!)" className="flex-1 basis-40" />
-                <Button size="sm" active={inviteOnlineOnly} onClick={() => setInviteOnlineOnly((v) => !v)} title="Só amigos online recebem o convite (é o que o console mostra). Desligado: manda para a lista toda.">só online</Button>
-                <Button onClick={() => run({ kind: 'inviteFriends', message: inviteText.trim() || 'Vem pro quarto!', onlineOnly: inviteOnlineOnly })} title="Cada conta convida os amigos dela para o quarto em que está (1276), como o “selecionar todos e convidar” do console">Convidar amigos</Button>
-              </FormRow>
-            </Stack>
-          </Card>
+          <div className="text-[11px] text-dim">
+            <span className="tnum">{seated}</span> sentada(s) · <span className="tnum">{lying}</span> deitada(s){searching ? <> · <span className="tnum">{searching}</span> procurando lugar</> : null}{p.hasFurniCatalog ? '' : ' · sem furnidata: só casas onde alguém já foi visto sentado'}
+          </div>
 
           <Card title="Addons na multidão" description="usam as mesmas configurações dos addons do painel Addons">
             <div className="divide-y divide-line/60">
@@ -577,7 +527,3 @@ export default function CrowdPanel(p: CrowdPanelProps) {
   );
 }
 
-/** Empilha linhas de formulário com o mesmo respiro. */
-function Stack({ children }: { children: ReactNode }) {
-  return <div className="space-y-1.5">{children}</div>;
-}

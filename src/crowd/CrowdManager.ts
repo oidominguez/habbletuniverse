@@ -114,6 +114,8 @@ export interface CrowdSessionView {
   detail: string;
   agentReady: boolean;
   me: string | null;
+  /** Código do visual da conta (2725), para a foto; null antes do login. */
+  figure: string | null;
   roomName: string | null;
   roomId: number | null;
   roomUsers: number;
@@ -270,11 +272,20 @@ export class CrowdManager {
   private timer: ReturnType<typeof setInterval> | null = null;
   /** Repassa logs também ao painel Logs da janela principal. */
   private externalLog: ((msg: string) => void) | null = null;
+  private statusListener: ((accountId: string, status: CrowdSessionStatus, detail: string) => void) | null = null;
   /** Resolvedor de Turnstile (2Captcha / CapSolver) — null = só manual. */
   private solver: ((req: TurnstileSolveRequest) => Promise<TurnstileSolveResult>) | null = null;
 
   setSolver(fn: ((req: TurnstileSolveRequest) => Promise<TurnstileSolveResult>) | null): void {
     this.solver = fn;
+  }
+
+  /**
+   * Avisa cada mudança de status de sessão (conta, status novo, detalhe). O controlador usa isto para o
+   * pool de proxies aprender: online = o proxy passou; "login recusado" = o site (anti-VPN) barrou o proxy.
+   */
+  setStatusListener(fn: ((accountId: string, status: CrowdSessionStatus, detail: string) => void) | null): void {
+    this.statusListener = fn;
   }
 
   setExternalLog(fn: ((msg: string) => void) | null): void {
@@ -1334,6 +1345,7 @@ export class CrowdManager {
         detail: s.detail,
         agentReady: s.agentReady,
         me: snap.me?.name ?? null,
+        figure: snap.me?.figure ?? null,
         roomName: snap.room.name,
         roomId: snap.room.id,
         roomUsers: snap.room.users.filter((u) => u.type === 1).length,
@@ -1377,6 +1389,11 @@ export class CrowdManager {
     // Fila de conexão: online, erro ou captcha (espera humana) liberam a vaga para a próxima conta.
     if (status === 'online' || status === 'error' || status === 'captcha') {
       this.queueRelease(s.id, status === 'online' ? 'autenticada' : status === 'captcha' ? 'caiu no captcha' : 'falhou');
+    }
+    try {
+      this.statusListener?.(s.id, status, detail);
+    } catch {
+      /* o ouvinte não pode derrubar a sessão */
     }
     this.bump();
   }

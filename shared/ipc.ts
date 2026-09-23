@@ -20,6 +20,9 @@ import type {
   CrowdNetworkSettings,
   HeadlessEvent,
   InterceptedHandshake,
+  ProxyPoolAddResult,
+  ProxyPoolEntry,
+  ProxyPoolPatch,
   ProxyTestResult,
   TrafficReport,
   TurnstileSolveRequest,
@@ -73,6 +76,12 @@ export const IPC = {
   CROWD_PROXY_APPLY: 'crowd:proxy:apply',
   /** Descobre o IP de saída da partition (testa o proxy). */
   CROWD_PROXY_TEST: 'crowd:proxy:test',
+  /** Pool de proxies (lista colada, escolhida por conta no seletor da linha). */
+  CROWD_PROXIES_LIST: 'crowd:proxies:list',
+  CROWD_PROXIES_ADD: 'crowd:proxies:add',
+  CROWD_PROXIES_UPDATE: 'crowd:proxies:update',
+  CROWD_PROXIES_REMOVE: 'crowd:proxies:remove',
+  CROWD_PROXIES_TEST: 'crowd:proxies:test',
   /** Resolvedor de captcha: configuração e resolução de um Turnstile. */
   CROWD_SOLVER_GET: 'crowd:solver:get',
   CROWD_SOLVER_SET: 'crowd:solver:set',
@@ -167,6 +176,12 @@ export interface HabbletApi {
     applyProxy(id: string, phase?: ProxyPhase): Promise<AppliedProxyInfo>;
     /** IP de saída visto por essa conta (pelo proxy, se houver). */
     testProxy(id: string): Promise<ProxyTestResult>;
+    /** Pool de proxies: lista, cola em lote (um por linha), edita rótulo/status, remove, testa o IP de saída de um item. */
+    listProxies(): Promise<ProxyPoolEntry[]>;
+    addProxies(text: string): Promise<ProxyPoolAddResult>;
+    updateProxy(id: string, patch: ProxyPoolPatch): Promise<ProxyPoolEntry>;
+    removeProxy(id: string): Promise<void>;
+    testPoolProxy(id: string): Promise<ProxyTestResult>;
     /** Resolvedor de captcha (2Captcha / CapSolver) com a chave do usuário. */
     getSolver(): Promise<CaptchaSolverSettings>;
     setSolver(provider: CaptchaSolverProvider, apiKey: string | null): Promise<CaptchaSolverSettings>;

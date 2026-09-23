@@ -38,11 +38,11 @@ function locked(file) {
 
 if (pre) {
   if (!existsSync(outDir)) process.exit(0); // primeira vez: não há o que travar
-  const busy = ['Habblet AddAll.exe', 'd3dcompiler_47.dll', 'ffmpeg.dll'].map((f) => join(outDir, f)).filter(locked);
+  const busy = ['Universe.exe', 'Habblet AddAll.exe', 'd3dcompiler_47.dll', 'ffmpeg.dll'].map((f) => join(outDir, f)).filter(locked);
   if (busy.length > 0) {
     die(
       'o app está aberto a partir de release/win-unpacked e trava os arquivos.\n' +
-        '    Feche o "Habblet AddAll" e rode de novo — senão o electron-builder aborta no meio e a\n' +
+        '    Feche o "Universe" e rode de novo — senão o electron-builder aborta no meio e a\n' +
         '    pasta continua com o build ANTERIOR, e você testa uma versão velha sem perceber.',
     );
   }
@@ -61,7 +61,7 @@ if (!readFileSync(asar).includes(Buffer.from(label, 'utf8'))) {
   die(
     `release/win-unpacked está DESATUALIZADO: o app.asar não contém a marca "${label}" deste build.\n` +
       '    O electron-builder não conseguiu substituir a pasta (o app estava aberto?).\n' +
-      '    Feche o "Habblet AddAll" e rode `npm run pack` de novo.',
+      '    Feche o "Universe" e rode `npm run pack` de novo.',
   );
 }
 

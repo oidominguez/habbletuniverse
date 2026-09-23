@@ -6,6 +6,13 @@ import GamePanel from './components/GamePanel';
 import { pasteSession } from './components/pasteSession';
 import CrowdPanel from './components/CrowdPanel';
 import { Button, Input } from './components/ui';
+import { Sky, LiveDot } from './components/Sky';
+import { BrandMark, Wordmark } from './components/Brand';
+import { Avatar } from './components/Avatar';
+import Palette from './components/Palette';
+import { logSource, LOG_SOURCES } from './components/logSource';
+import type { LogSource } from './components/logSource';
+import { cx } from './components/cx';
 import { useCrowdController } from './crowd/useCrowdController';
 import { BoardColumn } from './components/Board';
 import { useProtocolCapture } from './protocol/useProtocolCapture';
@@ -47,6 +54,7 @@ const URL_SHORTCUTS = [
 ];
 
 type PanelTab = 'logs' | 'board' | 'protocol' | 'game' | 'crowd';
+const PANEL_TABS: PanelTab[] = ['logs', 'board', 'game', 'protocol', 'crowd'];
 type WebviewEl = HTMLElement & {
   executeJavaScript: (c: string) => Promise<unknown>;
   getURL: () => string;
@@ -56,6 +64,9 @@ type WebviewEl = HTMLElement & {
   send?: (channel: string, ...args: unknown[]) => void;
   src?: string;
 };
+
+/** Margem entre o palco (borda arredondada do jogo) e as peças que flutuam sobre ele. */
+const STAGE_INSET = 12;
 
 export default function App() {
   /* ------------------------------------ refs / UI ------------------------------------ */
@@ -87,6 +98,9 @@ export default function App() {
   const [boardFilter, setBoardFilter] = useState('');
   const [isResizingPanel, setIsResizingPanel] = useState(false);
   const [protocolLabels, setProtocolLabels] = useState<Record<string, string>>({});
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [logFilter, setLogFilter] = useState<LogSource | 'all'>('all');
+  const [logText, setLogText] = useState('');
   // Fora do Electron (Vite no navegador) não há nada a carregar: já começa "carregado".
   const [settingsLoaded, setSettingsLoaded] = useState(() => !window.habblet);
 
@@ -362,7 +376,7 @@ export default function App() {
     };
   }, [webviewSrc, webviewEl, showToast, injectEnabledAddons]);
 
-  // Arrastar para redimensionar o painel inferior
+  // Arrastar para redimensionar a folha do dock
   useEffect(() => {
     if (!isResizingPanel) return;
     const onMove = (e: MouseEvent) => {
@@ -393,16 +407,16 @@ export default function App() {
     setWebviewSrc(u.startsWith('http') ? u : `https://${u}`);
   }, [urlInput, showToast]);
 
-  // Atalhos: Ctrl+K foca a URL; Ctrl+J alterna o painel inferior; Ctrl+, abre os addons.
+  // Atalhos: Ctrl+K abre a paleta; Ctrl+J alterna o painel inferior; Ctrl+, abre os addons.
   // Chegam pelo documento do app ou, com o foco no jogo, pelo processo principal (before-input-event).
   const runShortcut = useCallback((key: string) => {
-    if (key === 'k') (document.querySelector('[data-url-input]') as HTMLInputElement | null)?.focus();
+    if (key === 'k') setPaletteOpen((o) => !o);
     else if (key === 'j') setPanelCollapsed((c) => !c);
     else if (key === ',') { setAddonsPageOpen((o) => !o); setAddonSettingsOpen(null); }
     else if (key.startsWith('tab:')) {
       // instância de teste (HABBLET_OPEN=tab:<aba>): abre o dock numa aba
       const tab = key.slice('tab:'.length) as PanelTab;
-      if (['logs', 'board', 'protocol', 'game', 'crowd'].includes(tab)) { setPanelTab(tab); setPanelCollapsed(false); if (tab === 'crowd' || tab === 'game') setPanelHeight((h) => Math.max(h, 460)); }
+      if (PANEL_TABS.includes(tab)) { setPanelTab(tab); setPanelCollapsed(false); if (tab === 'crowd' || tab === 'game') setPanelHeight((h) => Math.max(h, 460)); }
     } else if (key.startsWith('open:')) {
       // usado pela instância de teste (HABBLET_OPEN) para abrir a gaveta / uma tela de settings
       const id = key.slice('open:'.length) as AddonId | '';
@@ -448,9 +462,19 @@ export default function App() {
     URL.revokeObjectURL(a.href);
   };
 
+  const visibleLogs = useMemo(() => {
+    const t = logText.trim().toLowerCase();
+    return logs.filter((l) => (logFilter === 'all' || logSource(l.msg) === logFilter) && (!t || l.msg.toLowerCase().includes(t)));
+  }, [logs, logFilter, logText]);
+  const logCounts = useMemo(() => {
+    const c: Record<LogSource, number> = { addons: 0, crowd: 0, paste: 0, system: 0 };
+    for (const l of logs) c[logSource(l.msg)]++;
+    return c;
+  }, [logs]);
+
   const exportLogs = () => {
-    download(`addall-logs-${Date.now()}.txt`, logs.map((l) => `[${new Date(l.t).toLocaleTimeString('pt-BR')}] ${l.msg}`).join('\n') || '(vazio)');
-    showToast('Logs exportados');
+    download(`universe-logs-${Date.now()}.txt`, visibleLogs.map((l) => `[${new Date(l.t).toLocaleTimeString('pt-BR')}] ${l.msg}`).join('\n') || '(vazio)');
+    showToast(visibleLogs.length === logs.length ? 'Logs exportados' : `${visibleLogs.length} linhas filtradas exportadas`);
   };
 
   const filtered = useMemo(() => {
@@ -469,7 +493,7 @@ export default function App() {
       '=== IGNORADOS ===', ...(stats.ignoredNames || []), '',
       '=== NÃO ACEITA SOLICITAÇÕES ===', ...(stats.notAcceptingRequestsNames || []),
     ];
-    download(`addall-board-${Date.now()}.txt`, lines.join('\n'));
+    download(`universe-board-${Date.now()}.txt`, lines.join('\n'));
     showToast('Board exportado');
   };
 
@@ -488,96 +512,60 @@ export default function App() {
   const roomLabel = game.room.id === null ? 'fora de quarto' : cleanRoomName(game.room.name) || `#${game.room.id}`;
   const activeAddons = ADDONS.filter((d) => store.enabled[d.id]);
   const addallOn = store.enabled.adduserall;
+  const crowdOnline = crowdCtl.snap.sessions.filter((s) => s.status === 'online').length;
+  const crowdConnected = crowdCtl.snap.connectedIds.length;
+  const sheetOpen = !panelCollapsed && !!webviewSrc;
+  const buildShort = BUILD_MODE === 'dev' ? 'dev' : BUILD_LABEL;
 
   /* ------------------------------------ render ------------------------------------ */
   return (
-    <div className="flex h-full bg-bg text-fg">
-      {/* Trilho esquerdo: marca + navegação do dock + addons */}
-      <nav className="flex w-14 shrink-0 flex-col items-center border-r border-line bg-surface py-3">
-        <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-xl bg-bg" title={`Habblet AddAll · build ${BUILD_MODE} ${BUILD_LABEL}`}>
-          <div className="brand-pixel" />
+    <div className="relative flex h-full flex-col bg-bg text-fg">
+      {/* Barra de título: marca · navegação em pílula · endereço */}
+      <header className="relative z-20 flex h-14 shrink-0 items-center gap-4 px-5">
+        <div className="flex w-[300px] shrink-0 items-center gap-3">
+          <BrandMark size={26} />
+          <Wordmark />
+          <span className="tnum text-[10.5px] text-dim" title={`Build ${BUILD_MODE === 'dev' ? 'de desenvolvimento' : 'empacotado'} de ${BUILD_LABEL}. O título da janela mostra o mesmo.`}>{buildShort}</span>
         </div>
-        <RailButton label="Jogo" active={panelTab === 'game' && !panelCollapsed} onClick={() => selectTab('game')} badge={game.pendingRequests.length || undefined} badgeTone="warn">
-          <IconUsers />
-        </RailButton>
-        <RailButton label="Logs" active={panelTab === 'logs' && !panelCollapsed} onClick={() => selectTab('logs')}>
-          <IconList />
-        </RailButton>
-        <RailButton label="Board da fila" active={panelTab === 'board' && !panelCollapsed} onClick={() => selectTab('board')}>
-          <IconColumns />
-        </RailButton>
-        <RailButton label="Protocolo" active={panelTab === 'protocol' && !panelCollapsed} onClick={() => selectTab('protocol')} dot={protocol.agentReady}>
-          <IconPulse />
-        </RailButton>
-        <RailButton label="Multidão" active={panelTab === 'crowd' && !panelCollapsed} onClick={() => selectTab('crowd')} badge={crowdCtl.snap.sessions.filter((s) => s.status === 'online').length || undefined} badgeTone="accent">
-          <IconCrowd />
-        </RailButton>
-        <div className="my-3 h-px w-6 bg-line" />
-        <RailButton label="Addons (Ctrl+,)" active={addonsPageOpen} onClick={openAddons} badge={activeAddons.length || undefined} badgeTone="accent">
-          <IconPuzzle />
-        </RailButton>
-        <div className="mt-auto flex flex-col items-center gap-1.5 pb-1">
-          <div className="flex flex-col items-center gap-1.5" title={protocol.agentReady ? 'Agente ativo: interceptando o jogo' : 'Agente inativo'}>
-            <span className={`h-2 w-2 rounded-full ${protocol.agentReady ? 'bg-accent animate-pulse-dot' : 'bg-line-strong'}`} />
-            <span className="text-[9px] uppercase tracking-wider text-dim">{protocol.agentReady ? 'live' : 'off'}</span>
-          </div>
-          {/* Marca do build: confere com o título da janela. Serve para não rodar um executável velho sem perceber. */}
-          <span className="tnum mt-1 text-[9px] text-dim" title={`Build ${BUILD_MODE === 'dev' ? 'de desenvolvimento' : 'empacotado'} de ${BUILD_LABEL}. O título da janela mostra o mesmo.`}>
-            {BUILD_MODE === 'dev' ? 'dev' : BUILD_LABEL.split(' ')[1]}
-          </span>
-        </div>
-      </nav>
 
-      <div className="flex min-w-0 flex-1 flex-col">
-        {/* Barra superior: URL + navegação + status */}
-        <header className="flex h-12 shrink-0 items-center gap-2 border-b border-line bg-surface px-3">
-          <div className="flex items-center gap-0.5">
-            <IconButton title="Voltar" onClick={() => nav('goBack')}><IconArrow dir="left" /></IconButton>
-            <IconButton title="Avançar" onClick={() => nav('goForward')}><IconArrow dir="right" /></IconButton>
-            <IconButton title="Recarregar" onClick={() => nav('reload')}><IconReload spinning={webviewLoading && !!webviewSrc} /></IconButton>
+        <nav aria-label="Seções" className="flex min-w-0 flex-1 justify-center">
+          <div className="flex items-center gap-0.5 rounded-full border border-line bg-fg/[0.045] p-[3px]">
+            <NavItem active={!sheetOpen} onClick={() => setPanelCollapsed(true)} title="Só o jogo (Ctrl+J alterna o painel)">Jogo</NavItem>
+            <NavItem active={sheetOpen && panelTab === 'crowd'} onClick={() => selectTab('crowd')} badge={crowdConnected > 0 ? `${crowdOnline}/${crowdConnected}` : undefined} badgeTone="accent">Multidão</NavItem>
+            <NavItem active={sheetOpen && panelTab === 'game'} onClick={() => selectTab('game')} badge={game.pendingRequests.length || undefined} badgeTone="warn">Sala</NavItem>
+            <NavItem active={sheetOpen && panelTab === 'protocol'} onClick={() => selectTab('protocol')} dot={protocol.agentReady}>Protocolo</NavItem>
+            <NavItem active={sheetOpen && (panelTab === 'logs' || panelTab === 'board')} onClick={() => selectTab('logs')}>Logs</NavItem>
+            <NavItem active={addonsPageOpen} onClick={openAddons} badge={activeAddons.length || undefined} badgeTone="accent" title="Addons (Ctrl+,)">Addons</NavItem>
           </div>
-          <div className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-lg border border-line bg-bg pl-3 pr-1 focus-within:border-accent/60">
+        </nav>
+
+        <div className="flex w-[300px] shrink-0 items-center justify-end gap-1">
+          <IconButton title="Voltar" onClick={() => nav('goBack')}><IconArrow dir="left" /></IconButton>
+          <IconButton title="Avançar" onClick={() => nav('goForward')}><IconArrow dir="right" /></IconButton>
+          <div className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-full border border-line bg-fg/[0.045] pl-3 pr-1 focus-within:border-accent/60">
             <IconGlobe />
             <input
               type="text"
               value={urlInput}
               onChange={(e) => setUrlInput(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && go()}
-              placeholder="URL do cliente (Ctrl+K)"
+              placeholder="endereço"
               data-url-input={true}
-              className="min-w-0 flex-1 bg-transparent text-[13px] text-fg outline-none placeholder-dim"
+              className="min-w-0 flex-1 bg-transparent text-[12.5px] text-fg outline-none placeholder-dim"
             />
-            <div className="hidden items-center gap-1 md:flex">
-              {URL_SHORTCUTS.map((s) => (
-                <button key={s.url} onClick={() => { setUrlInput(s.url); setWebviewSrc(s.url); }} className="rounded-md px-2 py-0.5 text-[11px] text-muted hover:bg-raised hover:text-fg" title={s.url}>{s.label}</button>
-              ))}
-            </div>
-            <button onClick={go} className="rounded-md bg-accent px-2.5 py-1 text-[11px] font-semibold text-accent-ink hover:bg-accent-strong">Ir</button>
+            <button onClick={() => nav('reload')} className="flex h-6 w-6 items-center justify-center rounded-full text-dim hover:text-fg" title="Recarregar"><IconReload spinning={webviewLoading && !!webviewSrc} /></button>
+            <button onClick={go} className="h-6 rounded-full bg-fg px-2.5 text-[11px] font-bold text-bg hover:bg-white">Ir</button>
           </div>
+        </div>
+      </header>
 
-          {/* Status: eu · sala · pedidos */}
-          <div className="ml-1 hidden items-center gap-1.5 lg:flex">
-            <Pill title="Sua conta (pacote 2725)">
-              <span className={`h-1.5 w-1.5 rounded-full ${game.me ? 'bg-accent' : 'bg-line-strong'}`} />
-              {game.me ? game.me.name : 'sem login'}
-            </Pill>
-            <Pill title={game.room.name ?? 'fora de quarto'}>
-              <IconDoor />
-              <span className="max-w-[200px] truncate">{roomLabel}</span>
-              {game.room.id !== null && <span className="tnum text-dim">{roomUserCount}</span>}
-            </Pill>
-            {game.pendingRequests.length > 0 && (
-              <button onClick={() => selectTab('game')} className="flex h-7 items-center gap-1.5 rounded-md bg-warn/15 px-2 text-[11px] font-medium text-warn hover:bg-warn/25" title="Pedidos de amizade pendentes">
-                ★ {game.pendingRequests.length}
-              </button>
-            )}
-          </div>
-        </header>
+      {/* Palco: o jogo em tela cheia com cantos suaves; tudo o mais flutua sobre ele */}
+      <main className="relative z-10 min-h-0 min-w-0 flex-1" style={{ padding: `0 ${STAGE_INSET}px ${STAGE_INSET}px` }}>
+        <div className="relative flex h-full w-full flex-col overflow-hidden rounded-[18px] border border-line bg-surface">
+          <Sky stars={webviewSrc ? 90 : 140} seed={webviewSrc ? 7 : 3} />
 
-        {/* Centro: jogo */}
-        <main className="relative flex min-h-0 min-w-0 flex-1 flex-col bg-bg">
           {!webviewSrc ? (
-            <EmptyState onShortcut={(u) => { setUrlInput(u); setWebviewSrc(u); }} onAddons={openAddons} />
+            <EmptyState urlInput={urlInput} onUrlChange={setUrlInput} onGo={go} onShortcut={(u) => { setUrlInput(u); setWebviewSrc(u); }} onAddons={openAddons} />
           ) : (
             <>
               {(!window.habblet || webviewPreload) && (
@@ -588,127 +576,171 @@ export default function App() {
                   allowpopups={true}
                   preload={webviewPreload ?? undefined}
                   webpreferences="sandbox=no"
-                  style={{ flex: 1, minHeight: 0 }}
+                  style={{ flex: 1, minHeight: 0, position: 'relative', zIndex: 1 }}
                 />
               )}
-              {webviewLoading && <div className="absolute inset-x-0 top-0 h-0.5 animate-pulse bg-accent" />}
+              {webviewLoading && <div className="absolute inset-x-0 top-0 z-30 h-0.5 animate-pulse bg-accent" />}
+
+              {/* Ilha: quem sou, onde estou, o que está pendente */}
+              <div className="glass animate-rise pointer-events-auto absolute left-1/2 top-3.5 z-30 flex h-11 -translate-x-1/2 items-center gap-1.5 rounded-full pl-2 pr-2 shadow-float">
+                <div className="flex h-[30px] items-center gap-2.5 pl-1 pr-3" title="Sua conta (pacote 2725)">
+                  <Avatar name={game.me?.name ?? ''} figure={game.me?.figure} size={20} ringFast={!!game.me} dim={!game.me} />
+                  <span className="text-[13px] font-semibold">{game.me ? game.me.name : 'sem login'}</span>
+                  {game.me ? <LiveDot /> : <span className="h-1.5 w-1.5 rounded-full bg-line-strong" />}
+                </div>
+                <span className="h-[18px] w-px bg-line-strong" />
+                <div className="flex h-[30px] items-center gap-2 px-3 text-muted" title={game.room.name ?? 'fora de quarto'}>
+                  <IconDoor />
+                  <span className="max-w-[220px] truncate text-[13px] text-fg">{roomLabel}</span>
+                  {game.room.id !== null && <span className="tnum font-mono text-[12px] text-dim">{roomUserCount}</span>}
+                </div>
+                {game.pendingRequests.length > 0 && (
+                  <>
+                    <span className="h-[18px] w-px bg-line-strong" />
+                    <button onClick={() => selectTab('game')} className="flex h-[30px] items-center gap-1.5 rounded-full bg-warn/[0.14] px-3 text-[12.5px] font-semibold text-warn hover:bg-warn/25" title="Pedidos de amizade pendentes">
+                      <IconStar /> {game.pendingRequests.length} {game.pendingRequests.length === 1 ? 'pedido' : 'pedidos'}
+                    </button>
+                  </>
+                )}
+              </div>
+
+              {/* Add User All ativo: leitura de relance no canto */}
+              {addallOn && (
+                <div className="glass animate-rise pointer-events-none absolute left-4 top-4 z-30 flex h-[34px] items-center gap-3.5 rounded-full px-3.5">
+                  <span className="text-[10.5px] font-semibold uppercase tracking-[0.06em] text-dim">Add User All</span>
+                  <Stat tone="warn" label="na fila" value={stats.queue} />
+                  <Stat tone="accent" label="enviados" value={stats.done} />
+                  {(stats.ignored ?? 0) > 0 && <Stat tone="muted" label="ignorados" value={stats.ignored ?? 0} />}
+                  {(stats.notAcceptingRequests ?? 0) > 0 && <Stat tone="muted" label="não aceita" value={stats.notAcceptingRequests ?? 0} />}
+                </div>
+              )}
+
+              {/* Dock: recolhido é uma barra fina; aberto é uma folha em vidro que sobe sobre o jogo */}
+              {panelCollapsed ? (
+                <div className="glass-strong animate-rise absolute bottom-3.5 left-1/2 z-30 flex h-[52px] w-[760px] max-w-[calc(100%-28px)] -translate-x-1/2 items-center gap-1 rounded-2xl pl-2.5 pr-2 shadow-dock">
+                  <DockTabs panelTab={null} onSelect={selectTab} roomUserCount={roomUserCount} agentReady={protocol.agentReady} crowdOnline={crowdOnline} crowdConnected={crowdConnected} />
+                  <span className="flex-1" />
+                  <span className="pr-2 text-[11px] text-dim">Ctrl+J</span>
+                  <button onClick={() => setPanelCollapsed(false)} className="flex h-[34px] w-[34px] items-center justify-center rounded-[10px] bg-fg/[0.06] text-fg hover:bg-fg/10" title="Expandir painel (Ctrl+J)" aria-label="Expandir painel"><IconChevron up /></button>
+                </div>
+              ) : (
+                <section
+                  className="glass-strong animate-rise absolute z-30 flex flex-col overflow-hidden rounded-[20px] shadow-sheet"
+                  style={{ left: STAGE_INSET, right: STAGE_INSET, bottom: STAGE_INSET, height: Math.min(panelHeight + 44, Math.round(window.innerHeight * 0.85)) }}
+                >
+                  <div
+                    role="separator"
+                    aria-label="Redimensionar painel"
+                    onMouseDown={(e) => { e.preventDefault(); panelResizeRef.current = { startY: e.clientY, startH: panelHeight }; setIsResizingPanel(true); }}
+                    className="group absolute inset-x-0 top-0 z-10 flex h-3 cursor-ns-resize items-center justify-center"
+                    title="Arrastar para redimensionar"
+                  >
+                    <span className="mt-1 h-1 w-10 rounded-full bg-line-strong group-hover:bg-accent" />
+                  </div>
+                  <div className="flex h-11 shrink-0 items-center gap-1 border-b border-line px-3 pt-1">
+                    <DockTabs panelTab={panelTab} onSelect={selectTab} roomUserCount={roomUserCount} agentReady={protocol.agentReady} crowdOnline={crowdOnline} crowdConnected={crowdConnected} />
+                    <div className="ml-auto flex items-center gap-1">
+                      {panelTab === 'logs' && (
+                        <>
+                          <div className="flex items-center gap-0.5 rounded-full border border-line bg-fg/[0.045] p-[3px]">
+                            <LogChip active={logFilter === 'all'} onClick={() => setLogFilter('all')} count={logs.length}>Tudo</LogChip>
+                            {LOG_SOURCES.map((src) => <LogChip key={src.id} active={logFilter === src.id} onClick={() => setLogFilter(src.id)} count={logCounts[src.id]}>{src.label}</LogChip>)}
+                          </div>
+                          <Input size="sm" type="text" value={logText} onChange={(e) => setLogText(e.target.value)} placeholder="filtrar texto ou conta" className="w-44" />
+                          <Button variant="ghost" size="sm" onClick={clearLogs}>Limpar</Button>
+                          <Button variant="ghost" size="sm" onClick={exportLogs}>Exportar</Button>
+                        </>
+                      )}
+                      {panelTab === 'board' && (
+                        <>
+                          <Input size="sm" type="text" value={boardFilter} onChange={(e) => setBoardFilter(e.target.value)} placeholder="filtrar nomes" className="w-40" />
+                          <Button variant="ghost" size="sm" onClick={exportBoard}>Exportar</Button>
+                        </>
+                      )}
+                      <button onClick={() => setPanelCollapsed(true)} className="ml-1 flex h-[30px] w-[30px] items-center justify-center rounded-[10px] bg-fg/[0.06] text-fg hover:bg-fg/10" title="Recolher painel (Ctrl+J)" aria-label="Recolher painel"><IconChevron up={false} /></button>
+                    </div>
+                  </div>
+                  <div className="flex min-h-0 flex-1 overflow-hidden">
+                    {panelTab === 'logs' && (
+                      <div className="flex-1 overflow-y-auto font-mono text-[11px] text-fg-2">
+                        {visibleLogs.length === 0 ? (
+                          <EmptyHint>{logs.length === 0 ? 'Nenhum log ainda. Ative um addon ou conecte uma conta para ver a atividade.' : 'Nada corresponde ao filtro.'}</EmptyHint>
+                        ) : (
+                          <div className="px-3 py-1.5">
+                            {visibleLogs.map((l, i) => {
+                              const src = LOG_SOURCES.find((x) => x.id === logSource(l.msg));
+                              return (
+                                <div key={i} className="flex gap-3 rounded px-1 py-0.5 hover:bg-fg/[0.04]">
+                                  <span className="tnum shrink-0 text-dim">{new Date(l.t).toLocaleTimeString('pt-BR', { hour12: false })}</span>
+                                  {logFilter === 'all' && src && <span className={cx('w-1 shrink-0 self-stretch rounded-full', src.bar)} title={src.label} />}
+                                  <span className="min-w-0 break-words">{l.msg}</span>
+                                </div>
+                              );
+                            })}
+                            <div ref={logsEndRef} />
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    {panelTab === 'game' && <GamePanel game={game} actions={gameActions} agentReady={protocol.agentReady} furniCatalog={crowdCtl.furniCatalog} wallCatalog={crowdCtl.wallCatalog} state={gameState} showToast={showToast} />}
+                    {panelTab === 'crowd' && (
+                      <CrowdPanel {...crowdCtl.panelProps} showToast={showToast} />
+                    )}
+                    {panelTab === 'protocol' && (
+                      <ProtocolPanel capture={protocol} labels={{ ...KNOWN_HEADERS, ...protocolLabels }} onSetLabel={setProtocolLabel} showToast={showToast} />
+                    )}
+                    {panelTab === 'board' && (
+                      <div className="grid flex-1 grid-cols-5 gap-2 overflow-auto p-3">
+                        <BoardColumn title="Fila" names={filtered.q} variant="warning" />
+                        <BoardColumn title="Processando" names={filtered.pr} variant="blue" />
+                        <BoardColumn title="Enviados" names={filtered.dn} variant="success" />
+                        <BoardColumn title="Ignorados" names={filtered.ig} variant="muted" />
+                        <BoardColumn title="Não aceita" names={filtered.nar} variant="muted" />
+                      </div>
+                    )}
+                  </div>
+                </section>
+              )}
             </>
           )}
-
-          {/* Chips do Add User All flutuando sobre o jogo, só quando ativo */}
-          {addallOn && (
-            <div className="pointer-events-none absolute left-3 top-3 flex items-center gap-1.5 animate-fade-up">
-              <Chip tone="warn" label="fila" value={stats.queue} />
-              <Chip tone="accent" label="enviados" value={stats.done} />
-              {(stats.ignored ?? 0) > 0 && <Chip tone="muted" label="ignorados" value={stats.ignored ?? 0} />}
-              {(stats.notAcceptingRequests ?? 0) > 0 && <Chip tone="muted" label="não aceita" value={stats.notAcceptingRequests ?? 0} />}
-            </div>
-          )}
-        </main>
-
-        {/* Dock inferior */}
-        <section className={`shrink-0 border-t border-line bg-surface ${panelCollapsed ? '' : 'shadow-dock'}`}>
-          {!panelCollapsed && (
-            <div
-              role="separator"
-              aria-label="Redimensionar painel"
-              onMouseDown={(e) => { e.preventDefault(); panelResizeRef.current = { startY: e.clientY, startH: panelHeight }; setIsResizingPanel(true); }}
-              className="group flex h-2 cursor-ns-resize items-center justify-center"
-              title="Arrastar para redimensionar"
-            >
-              <span className="h-0.5 w-8 rounded-full bg-line group-hover:bg-accent" />
-            </div>
-          )}
-          <div className="flex h-10 items-center gap-1 px-2">
-            <div className="flex items-center gap-0.5 rounded-lg bg-bg p-0.5">
-              <Tab active={panelTab === 'logs' && !panelCollapsed} onClick={() => selectTab('logs')}>Logs</Tab>
-              <Tab active={panelTab === 'board' && !panelCollapsed} onClick={() => selectTab('board')}>Board</Tab>
-              <Tab active={panelTab === 'game' && !panelCollapsed} onClick={() => selectTab('game')}>
-                Jogo{roomUserCount > 0 && <span className="tnum ml-1.5 text-dim">{roomUserCount}</span>}
-              </Tab>
-              <Tab active={panelTab === 'protocol' && !panelCollapsed} onClick={() => selectTab('protocol')}>
-                Protocolo{protocol.agentReady && <span className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-accent" />}
-              </Tab>
-              <Tab active={panelTab === 'crowd' && !panelCollapsed} onClick={() => selectTab('crowd')}>
-                Multidão{crowdCtl.snap.connectedIds.length > 0 && <span className="tnum ml-1.5 text-dim">{crowdCtl.snap.sessions.filter((s) => s.status === 'online').length}/{crowdCtl.snap.connectedIds.length}</span>}
-              </Tab>
-            </div>
-            <div className="ml-auto flex items-center gap-1">
-              {panelTab === 'logs' && !panelCollapsed && (
-                <>
-                  <TextButton onClick={clearLogs}>Limpar</TextButton>
-                  <TextButton onClick={exportLogs}>Exportar</TextButton>
-                </>
-              )}
-              {panelTab === 'board' && !panelCollapsed && (
-                <>
-                  <Input type="text" value={boardFilter} onChange={(e) => setBoardFilter(e.target.value)} placeholder="filtrar nomes" className="w-40" />
-                  <TextButton onClick={exportBoard}>Exportar</TextButton>
-                </>
-              )}
-              <IconButton title={panelCollapsed ? 'Expandir painel (Ctrl+J)' : 'Recolher painel (Ctrl+J)'} onClick={() => setPanelCollapsed(!panelCollapsed)}>
-                <IconChevron up={panelCollapsed} />
-              </IconButton>
-            </div>
-          </div>
-          {!panelCollapsed && (
-            <div className="flex overflow-hidden border-t border-line" style={{ height: panelHeight }}>
-              {panelTab === 'logs' && (
-                <div className="flex-1 overflow-y-auto font-mono text-[11px] text-fg-2">
-                  {logs.length === 0 ? (
-                    <EmptyHint>Nenhum log ainda. Ative um addon para ver a atividade.</EmptyHint>
-                  ) : (
-                    <div className="px-2 py-1">
-                      {logs.map((l, i) => (
-                        <div key={i} className="flex gap-3 rounded px-1 py-0.5 hover:bg-raised/60">
-                          <span className="tnum shrink-0 text-dim">{new Date(l.t).toLocaleTimeString('pt-BR', { hour12: false })}</span>
-                          <span className="min-w-0 break-words">{l.msg}</span>
-                        </div>
-                      ))}
-                      <div ref={logsEndRef} />
-                    </div>
-                  )}
-                </div>
-              )}
-              {panelTab === 'game' && <GamePanel game={game} actions={gameActions} agentReady={protocol.agentReady} furniCatalog={crowdCtl.furniCatalog} wallCatalog={crowdCtl.wallCatalog} state={gameState} showToast={showToast} />}
-              {panelTab === 'crowd' && (
-                <CrowdPanel {...crowdCtl.panelProps} showToast={showToast} />
-              )}
-              {panelTab === 'protocol' && (
-                <ProtocolPanel capture={protocol} labels={{ ...KNOWN_HEADERS, ...protocolLabels }} onSetLabel={setProtocolLabel} showToast={showToast} />
-              )}
-              {panelTab === 'board' && (
-                <div className="grid flex-1 grid-cols-5 gap-2 overflow-auto p-2">
-                  <BoardColumn title="Fila" names={filtered.q} variant="warning" />
-                  <BoardColumn title="Processando" names={filtered.pr} variant="blue" />
-                  <BoardColumn title="Enviados" names={filtered.dn} variant="success" />
-                  <BoardColumn title="Ignorados" names={filtered.ig} variant="muted" />
-                  <BoardColumn title="Não aceita" names={filtered.nar} variant="muted" />
-                </div>
-              )}
-            </div>
-          )}
-        </section>
-      </div>
+        </div>
+      </main>
 
       {/* Camada única das telas da Multidão: um host fixo posicionado sobre o espaço das telas.
           Os <webview> das contas vivem DENTRO dele, criados à mão (CrowdGuestHost); mostramos um
           por vez trocando só o CSS, sem nunca reparentar/recarregar o guest. */}
       <div
         ref={crowdHostRef}
-        className={crowdCtl.guestsVisible ? 'fixed z-30 overflow-hidden bg-black' : 'fixed overflow-hidden'}
+        className={crowdCtl.guestsVisible ? 'fixed z-40 overflow-hidden rounded-xl bg-black' : 'fixed overflow-hidden'}
         style={crowdCtl.guestsVisible && crowdCtl.tilesRect
           ? { left: crowdCtl.tilesRect.x, top: crowdCtl.tilesRect.y, width: crowdCtl.tilesRect.w, height: crowdCtl.tilesRect.h }
           : { left: -20000, top: 0, width: 1280, height: 720, pointerEvents: 'none' }}
       />
       {crowdCtl.guestsVisible && crowdCtl.tilesRect && crowdCtl.selectedSession?.status === 'captcha' && (
         <div
-          className="pointer-events-none fixed z-40 rounded-md bg-warn px-2 py-1 text-[11px] font-medium text-accent-ink shadow"
+          className="pointer-events-none fixed z-50 rounded-full bg-warn px-3 py-1 text-[11px] font-semibold text-accent-ink shadow-float"
           style={{ left: crowdCtl.tilesRect.x + 8, top: crowdCtl.tilesRect.y + 8, maxWidth: crowdCtl.tilesRect.w - 16 }}
         >
           {crowdCtl.selectedSession.account.username} · {crowdCtl.selectedSession.detail}
         </div>
       )}
+
+      {paletteOpen && <Palette
+        onClose={() => setPaletteOpen(false)}
+        currentUrl={webviewSrc}
+        enabled={store.enabled}
+        serverCommands={crowdCtl.snap.commands}
+        crowdOnline={crowdOnline}
+        onNavigate={(u) => { setUrlInput(u); setWebviewSrc(u); }}
+        onReload={() => nav('reload')}
+        onTab={(t) => { setPanelTab(t); setPanelCollapsed(false); if ((t === 'crowd' || t === 'game') && panelHeight < 420) setPanelHeight(Math.min(Math.round(window.innerHeight * 0.6), 460)); }}
+        onGameOnly={() => setPanelCollapsed(true)}
+        onOpenAddons={(id) => { setAddonsPageOpen(true); setAddonSettingsOpen(id ?? null); }}
+        onToggleAddon={onToggleAddon}
+        onCrowdCommand={(cmd) => crowdCtl.panelProps.onCommand(null, cmd)}
+        onExportProfile={exportProfile}
+        onImportProfile={importProfile}
+      />}
 
       {addonsPageOpen && (
         <AddonsOverlay
@@ -726,8 +758,8 @@ export default function App() {
         />
       )}
 
-      {/* Toast */}
-      <div className={`pointer-events-none fixed bottom-5 left-1/2 z-50 -translate-x-1/2 rounded-lg border border-line bg-raised px-4 py-2 text-[13px] text-fg shadow-2xl transition-all duration-200 ${toast.show ? 'translate-y-0 opacity-100' : 'translate-y-3 opacity-0'}`}>
+      {/* Toast: uma ilha pequena que sobe do rodapé */}
+      <div className={`glass-strong pointer-events-none fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-full px-4 py-2 text-[12.5px] text-fg shadow-float transition-all duration-200 ${toast.show ? 'translate-y-0 opacity-100' : 'translate-y-3 opacity-0'}`}>
         {toast.message}
       </div>
     </div>
@@ -742,53 +774,71 @@ function cleanRoomName(name: string | null): string {
 
 /* ------------------------------------ peças de UI ------------------------------------ */
 
-function RailButton({ label, active, onClick, children, badge, badgeTone, dot }: { label: string; active: boolean; onClick: () => void; children: ReactNode; badge?: number; badgeTone?: 'accent' | 'warn'; dot?: boolean }) {
+function NavItem({ active, onClick, children, badge, badgeTone, dot, title }: { active: boolean; onClick: () => void; children: ReactNode; badge?: number | string; badgeTone?: 'accent' | 'warn'; dot?: boolean; title?: string }) {
   return (
     <button
       onClick={onClick}
-      title={label}
-      aria-label={label}
-      className={`relative mb-1 flex h-10 w-10 items-center justify-center rounded-xl transition-colors ${active ? 'bg-accent/15 text-accent' : 'text-muted hover:bg-raised hover:text-fg'}`}
+      title={title}
+      aria-current={active ? 'page' : undefined}
+      className={cx('flex h-[30px] items-center gap-2 whitespace-nowrap rounded-full px-4 text-[13px] transition-colors', active ? 'bg-fg/10 font-semibold text-fg' : 'font-medium text-muted hover:text-fg')}
     >
       {children}
-      {badge !== undefined && (
-        <span className={`tnum absolute -right-0.5 -top-0.5 min-w-[16px] rounded-full px-1 text-[9px] font-semibold leading-4 ${badgeTone === 'warn' ? 'bg-warn text-accent-ink' : 'bg-accent text-accent-ink'}`}>{badge}</span>
-      )}
-      {dot && <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-accent" />}
+      {badge !== undefined && <span className={cx('tnum font-mono text-[11px]', badgeTone === 'warn' ? 'text-warn' : 'text-accent')}>{badge}</span>}
+      {dot && <LiveDot size={6} />}
+    </button>
+  );
+}
+
+/** Abas do dock (barra recolhida e cabeçalho da folha). `panelTab` null = nenhuma ativa (barra recolhida). */
+function DockTabs({ panelTab, onSelect, roomUserCount, agentReady, crowdOnline, crowdConnected }: { panelTab: PanelTab | null; onSelect: (t: PanelTab) => void; roomUserCount: number; agentReady: boolean; crowdOnline: number; crowdConnected: number }) {
+  return (
+    <>
+      <Tab active={panelTab === 'logs'} onClick={() => onSelect('logs')}>Logs</Tab>
+      <Tab active={panelTab === 'board'} onClick={() => onSelect('board')}>Board</Tab>
+      <Tab active={panelTab === 'game'} onClick={() => onSelect('game')}>
+        Sala{roomUserCount > 0 && <span className="tnum font-mono text-[11px] text-dim">{roomUserCount}</span>}
+      </Tab>
+      <Tab active={panelTab === 'protocol'} onClick={() => onSelect('protocol')}>
+        Protocolo{agentReady && <LiveDot size={6} />}
+      </Tab>
+      <Tab active={panelTab === 'crowd'} onClick={() => onSelect('crowd')}>
+        Multidão{crowdConnected > 0 && <span className="tnum font-mono text-[11px] text-accent">{crowdOnline}/{crowdConnected}</span>}
+      </Tab>
+    </>
+  );
+}
+
+function Tab({ active, onClick, children }: { active: boolean; onClick: () => void; children: ReactNode }) {
+  return (
+    <button onClick={onClick} className={cx('flex h-[34px] items-center gap-2 whitespace-nowrap rounded-[10px] px-3.5 text-[13px] font-medium transition-colors', active ? 'bg-fg/10 text-fg' : 'text-muted hover:text-fg')}>
+      {children}
+    </button>
+  );
+}
+
+function LogChip({ active, onClick, count, children }: { active: boolean; onClick: () => void; count: number; children: ReactNode }) {
+  return (
+    <button onClick={onClick} className={cx('flex h-6 items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 text-[11px] font-medium transition-colors', active ? 'bg-fg/10 text-fg' : 'text-muted hover:text-fg')}>
+      {children}
+      <span className="tnum font-mono text-[10px] text-dim">{count}</span>
     </button>
   );
 }
 
 function IconButton({ title, onClick, children }: { title: string; onClick: () => void; children: ReactNode }) {
   return (
-    <button onClick={onClick} title={title} aria-label={title} className="flex h-8 w-8 items-center justify-center rounded-md text-muted hover:bg-raised hover:text-fg">
+    <button onClick={onClick} title={title} aria-label={title} className="flex h-8 w-8 items-center justify-center rounded-full text-muted hover:bg-fg/[0.06] hover:text-fg">
       {children}
     </button>
   );
 }
 
-function TextButton({ onClick, children }: { onClick: () => void; children: ReactNode }) {
-  return <Button variant="ghost" onClick={onClick}>{children}</Button>;
-}
-
-function Tab({ active, onClick, children }: { active: boolean; onClick: () => void; children: ReactNode }) {
-  return (
-    <button onClick={onClick} className={`flex h-7 items-center rounded-md px-3 text-[12px] font-medium transition-colors ${active ? 'bg-raised text-fg' : 'text-muted hover:text-fg'}`}>
-      {children}
-    </button>
-  );
-}
-
-function Pill({ title, children }: { title?: string; children: ReactNode }) {
-  return <span title={title} className="flex h-7 items-center gap-1.5 rounded-md border border-line bg-bg px-2 text-[11px] text-fg-2">{children}</span>;
-}
-
-function Chip({ tone, label, value }: { tone: 'warn' | 'accent' | 'muted'; label: string; value: number }) {
+function Stat({ tone, label, value }: { tone: 'warn' | 'accent' | 'muted'; label: string; value: number }) {
   const tones = { warn: 'text-warn', accent: 'text-accent', muted: 'text-muted' };
   return (
-    <span className="flex items-center gap-1.5 rounded-md border border-line bg-surface/90 px-2 py-1 text-[11px] backdrop-blur">
-      <span className={`tnum font-semibold ${tones[tone]}`}>{value}</span>
-      <span className="text-dim">{label}</span>
+    <span className="flex items-baseline gap-1.5">
+      <span className={cx('tnum font-mono text-[13px]', tones[tone])}>{value}</span>
+      <span className="text-[11px] text-dim">{label}</span>
     </span>
   );
 }
@@ -797,55 +847,69 @@ function EmptyHint({ children }: { children: ReactNode }) {
   return <div className="flex flex-1 items-center justify-center p-6 text-center text-xs text-dim">{children}</div>;
 }
 
-function EmptyState({ onShortcut, onAddons }: { onShortcut: (url: string) => void; onAddons: () => void }) {
+/** Tela de abertura: a marca em órbita, o endereço e os três passos. */
+function EmptyState({ urlInput, onUrlChange, onGo, onShortcut, onAddons }: { urlInput: string; onUrlChange: (v: string) => void; onGo: () => void; onShortcut: (url: string) => void; onAddons: () => void }) {
   return (
-    <div className="relative flex flex-1 items-center justify-center overflow-hidden">
-      <div className="empty-grid absolute inset-0" />
-      <div className="relative w-full max-w-md px-6 animate-fade-up">
-        <div className="mb-6 flex items-center gap-3">
-          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-surface shadow-glow"><div className="brand-pixel" /></div>
-          <div>
-            <h1 className="text-lg font-semibold tracking-tight text-fg">Habblet AddAll</h1>
-            <p className="text-[13px] text-muted">O jogo por dentro: pacotes, não cliques.</p>
+    <div className="relative flex flex-1 flex-col items-center justify-center overflow-hidden">
+      {/* Anéis orbitais lentos atrás da marca */}
+      <div aria-hidden className="pointer-events-none absolute left-1/2 top-1/2 h-[1100px] w-[1100px] -translate-x-1/2 -translate-y-1/2 rounded-full border border-line/60" />
+      <div aria-hidden className="pointer-events-none absolute left-1/2 top-1/2 h-[760px] w-[760px] -translate-x-1/2 -translate-y-1/2 rounded-full border border-line border-t-fg/25 animate-orbit-slow" />
+      <div aria-hidden className="pointer-events-none absolute left-1/2 top-1/2 h-[460px] w-[460px] -translate-x-1/2 -translate-y-1/2 rounded-full border border-line-strong/70" />
+
+      <div className="relative flex flex-col items-center gap-9 px-6">
+        <div className="animate-rise flex flex-col items-center gap-6">
+          <BrandMark size={64} />
+          <div className="flex flex-col items-center gap-2.5">
+            <h1 className="wordmark m-0 text-[44px] font-medium tracking-[0.32em] text-fg">Universe</h1>
+            <p className="m-0 text-[14px] text-muted">O jogo por dentro: pacotes, não cliques.</p>
           </div>
         </div>
-        <ol className="space-y-3 text-[13px] text-fg-2">
-          <Step n={1}>Abra o hotel e faça login.
-            <div className="mt-2 flex gap-2">
-              {URL_SHORTCUTS.map((s) => (
-                <button key={s.url} onClick={() => onShortcut(s.url)} className="rounded-md border border-line bg-surface px-3 py-1.5 text-[12px] text-fg hover:border-accent/60 hover:text-accent">{s.label}</button>
-              ))}
-            </div>
-          </Step>
-          <Step n={2}>Entre num quarto. A aba <b className="font-medium text-fg">Jogo</b> lista quem está lá direto do servidor.</Step>
-          <Step n={3}>Ative o que precisar em <button onClick={onAddons} className="font-medium text-accent hover:underline">Addons</button>. Tudo roda pelo protocolo.</Step>
+        <div className="animate-rise flex items-center gap-2.5" style={{ animationDelay: '120ms' }}>
+          <div className="glass flex h-11 w-[420px] items-center gap-2.5 rounded-full border-line-strong pl-4 pr-1.5">
+            <IconGlobe />
+            <input
+              type="text"
+              value={urlInput}
+              onChange={(e) => onUrlChange(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && onGo()}
+              placeholder="habblet.city/hotel"
+              className="min-w-0 flex-1 bg-transparent text-[13.5px] text-fg outline-none placeholder-dim"
+            />
+            <button onClick={onGo} className="h-8 rounded-full bg-fg px-4 text-[12.5px] font-bold text-bg hover:bg-white">Entrar</button>
+          </div>
+        </div>
+        <div className="animate-rise flex items-center gap-2" style={{ animationDelay: '180ms' }}>
+          {URL_SHORTCUTS.map((s) => (
+            <button key={s.url} onClick={() => onShortcut(s.url)} className="h-8 rounded-full border border-line-strong px-4 text-[12.5px] font-medium text-muted hover:border-dim hover:text-fg" title={s.url}>{s.label}</button>
+          ))}
+        </div>
+        <ol className="animate-rise m-0 flex list-none gap-10 p-0" style={{ animationDelay: '220ms' }}>
+          <Step n="01">Abra o hotel e faça login</Step>
+          <Step n="02">Entre num quarto</Step>
+          <Step n="03">Ligue o que precisar em <button onClick={onAddons} className="font-semibold text-fg hover:text-accent">Addons</button></Step>
         </ol>
-        <p className="mt-6 text-[11px] text-dim">Atalhos: Ctrl+K URL · Ctrl+J painel · Ctrl+, addons</p>
-        <p className="mt-1 text-[11px] text-dim">Build {BUILD_MODE === 'dev' ? 'de desenvolvimento' : 'empacotado'} de {BUILD_LABEL}</p>
       </div>
+      <footer className="absolute bottom-0 flex h-12 items-center justify-center gap-4 text-[11px] text-dim">
+        <span>Ctrl+K paleta</span><span>·</span><span>Ctrl+J painel</span><span>·</span><span>Ctrl+, addons</span><span>·</span>
+        <span className="font-mono">build {BUILD_MODE === 'dev' ? 'de desenvolvimento' : BUILD_LABEL}</span>
+      </footer>
     </div>
   );
 }
 
-function Step({ n, children }: { n: number; children: ReactNode }) {
+function Step({ n, children }: { n: string; children: ReactNode }) {
   return (
-    <li className="flex gap-3">
-      <span className="tnum mt-px flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-surface text-[11px] font-semibold text-accent">{n}</span>
-      <div className="min-w-0">{children}</div>
+    <li className="flex items-center gap-3 text-[13px] text-muted">
+      <span className="tnum font-mono text-[11px] text-dim">{n}</span>
+      <span>{children}</span>
     </li>
   );
 }
 
 /* ------------------------------------ ícones ------------------------------------ */
-const ic = 'h-[18px] w-[18px]';
-function IconUsers() { return <svg className={ic} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d="M17 20h5v-2a4 4 0 00-5-3.9M9 20H4v-2a4 4 0 014-4h2a4 4 0 014 4v2H9zm3-11a3 3 0 100-6 3 3 0 000 6zm7 1a2.5 2.5 0 100-5 2.5 2.5 0 000 5z" /></svg>; }
-function IconList() { return <svg className={ic} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}><path strokeLinecap="round" d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" /></svg>; }
-function IconColumns() { return <svg className={ic} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}><rect x="3" y="4" width="5" height="16" rx="1" /><rect x="10" y="4" width="5" height="10" rx="1" /><rect x="17" y="4" width="4" height="13" rx="1" /></svg>; }
-function IconPulse() { return <svg className={ic} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d="M3 12h4l2-6 4 12 2-6h6" /></svg>; }
-function IconCrowd() { return <svg className={ic} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}><circle cx="8" cy="8" r="3" /><circle cx="17" cy="9" r="2.5" /><path strokeLinecap="round" strokeLinejoin="round" d="M2.5 19a5.5 5.5 0 0111 0M13.5 18.5a4 4 0 018 0" /></svg>; }
-function IconPuzzle() { return <svg className={ic} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d="M10 4a2 2 0 114 0v1h3a1 1 0 011 1v3h1a2 2 0 110 4h-1v3a1 1 0 01-1 1h-3v1a2 2 0 11-4 0v-1H7a1 1 0 01-1-1v-3H5a2 2 0 110-4h1V6a1 1 0 011-1h3V4z" /></svg>; }
 function IconGlobe() { return <svg className="h-3.5 w-3.5 shrink-0 text-dim" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3a14 14 0 010 18M12 3a14 14 0 000 18" /></svg>; }
-function IconDoor() { return <svg className="h-3.5 w-3.5 shrink-0 text-dim" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d="M5 21V5a2 2 0 012-2h10a2 2 0 012 2v16M3 21h18M15 12h.01" /></svg>; }
+function IconDoor() { return <svg className="h-3.5 w-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d="M5 21V5a2 2 0 012-2h10a2 2 0 012 2v16M3 21h18M15 12h.01" /></svg>; }
+function IconStar() { return <svg className="h-3 w-3" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l2.9 6.6 7.1.7-5.4 4.8 1.6 7L12 17.5 5.8 21l1.6-7L2 9.3l7.1-.7L12 2z" /></svg>; }
 function IconArrow({ dir }: { dir: 'left' | 'right' }) { return <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d={dir === 'left' ? 'M15 19l-7-7 7-7' : 'M9 5l7 7-7 7'} /></svg>; }
-function IconReload({ spinning }: { spinning: boolean }) { return <svg className={`h-4 w-4 ${spinning ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h5M20 20v-5h-5M5.6 15A7 7 0 0019 12M18.4 9A7 7 0 005 12" /></svg>; }
-function IconChevron({ up }: { up: boolean }) { return <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d={up ? 'M5 15l7-7 7 7' : 'M19 9l-7 7-7-7'} /></svg>; }
+function IconReload({ spinning }: { spinning: boolean }) { return <svg className={`h-3.5 w-3.5 ${spinning ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h5M20 20v-5h-5M5.6 15A7 7 0 0019 12M18.4 9A7 7 0 005 12" /></svg>; }
+function IconChevron({ up }: { up: boolean }) { return <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d={up ? 'M5 15l7-7 7 7' : 'M19 9l-7 7-7-7'} /></svg>; }

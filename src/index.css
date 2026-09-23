@@ -3,10 +3,11 @@
 @tailwind utilities;
 
 /* ------------------------------------------------------------------
-   Habblet AddAll — base visual
-   Tema único ("Ink & Mint"): fundo de tinta, superfícies em camadas discretas,
-   um acento menta para o que está vivo ou é ação principal. Sem gradientes
-   chamativos, sem sombras coloridas fora do acento.
+   Universe — base visual
+   Espaço profundo, superfícies em vidro, fio de 1 px, uma só cor viva (o
+   "pulsar"). O céu (estrelas e nebulosa) fica atrás do jogo e das folhas;
+   nunca atrás de texto denso. Movimento lento e contínuo; tudo desliga com
+   "reduzir movimento" do sistema.
 ------------------------------------------------------------------- */
 
 * {
@@ -24,7 +25,7 @@ body {
   background: theme('colors.bg');
   color: theme('colors.fg');
   font-family: theme('fontFamily.sans');
-  font-feature-settings: 'cv11', 'ss01', 'tnum';
+  font-feature-settings: 'tnum';
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
@@ -65,7 +66,7 @@ html {
 :focus-visible {
   outline: 2px solid theme('colors.accent');
   outline-offset: 1px;
-  border-radius: 6px;
+  border-radius: 999px;
 }
 
 /* Webview ocupa o espaço disponível */
@@ -75,36 +76,94 @@ webview {
   display: flex;
 }
 
-/* Marca: um "H" em pixel art feito só com box-shadow (identidade, sem imagem) */
-.brand-pixel {
-  position: relative;
-  width: 22px;
-  height: 22px;
+/* Vidro: o que flutua sobre o jogo (ilha, dock, folhas, gaveta) */
+.glass {
+  background: rgba(10, 12, 20, 0.74);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid theme('colors.line');
 }
-.brand-pixel::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 0;
-  width: 4px;
-  height: 4px;
-  background: theme('colors.accent');
-  /* colunas da esquerda e direita + barra do meio, em grade 5x5 de 4px */
-  box-shadow:
-    0 4px 0 theme('colors.accent'), 0 8px 0 theme('colors.accent'), 0 12px 0 theme('colors.accent'), 0 16px 0 theme('colors.accent'),
-    16px 0 0 theme('colors.accent'), 16px 4px 0 theme('colors.accent'), 16px 8px 0 theme('colors.accent'), 16px 12px 0 theme('colors.accent'), 16px 16px 0 theme('colors.accent'),
-    4px 8px 0 theme('colors.accent'), 8px 8px 0 theme('colors.accent'), 12px 8px 0 theme('colors.accent'),
-    8px 4px 0 theme('colors.accent-strong');
+.glass-strong {
+  background: rgba(10, 12, 20, 0.88);
+  backdrop-filter: blur(32px);
+  -webkit-backdrop-filter: blur(32px);
+  border: 1px solid theme('colors.line');
 }
 
-/* Grade sutil no estado vazio (lembra o piso isométrico do jogo sem imitar) */
-.empty-grid {
-  background-image:
-    linear-gradient(theme('colors.line') 1px, transparent 1px),
-    linear-gradient(90deg, theme('colors.line') 1px, transparent 1px);
-  background-size: 28px 28px;
-  mask-image: radial-gradient(ellipse at center, rgba(0, 0, 0, 0.55), transparent 70%);
-  -webkit-mask-image: radial-gradient(ellipse at center, rgba(0, 0, 0, 0.55), transparent 70%);
+/* Nebulosa: duas manchas quase invisíveis que derivam devagar atrás do palco */
+.nebula-a,
+.nebula-b {
+  position: absolute;
+  border-radius: 999px;
+  pointer-events: none;
+}
+.nebula-a {
+  top: -220px;
+  left: 12%;
+  width: 720px;
+  height: 520px;
+  background: radial-gradient(closest-side, rgba(64, 78, 170, 0.28), rgba(64, 78, 170, 0));
+}
+.nebula-b {
+  bottom: -260px;
+  right: 8%;
+  width: 820px;
+  height: 560px;
+  background: radial-gradient(closest-side, rgba(38, 132, 150, 0.2), rgba(38, 132, 150, 0));
+}
+
+/* Estrelas: cada uma cintila fora de fase (duração e atraso vêm inline) */
+.star {
+  animation: twinkle 6s ease-in-out infinite;
+}
+
+/* Marca: núcleo, órbita e um satélite em movimento (o app orbita o jogo) */
+.brand-mark {
+  position: relative;
+  flex-shrink: 0;
+}
+.brand-mark::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  border: 1px solid rgba(244, 246, 251, 0.45);
+}
+.brand-mark::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 28%;
+  height: 28%;
+  transform: translate(-50%, -50%);
+  border-radius: 999px;
+  background: theme('colors.fg');
+}
+.brand-mark > span {
+  position: absolute;
+  inset: 0;
+  animation: orbit 14s linear infinite;
+}
+.brand-mark > span::before {
+  content: '';
+  position: absolute;
+  top: -9%;
+  left: 50%;
+  width: 18%;
+  height: 18%;
+  transform: translateX(-50%);
+  border-radius: 999px;
+  background: theme('colors.fg');
+  box-shadow: 0 0 10px rgba(143, 211, 255, 0.9);
+}
+
+/* Wordmark: caixa alta, entreletra larga, nunca itálico, nunca gradiente */
+.wordmark {
+  font-family: theme('fontFamily.display');
+  font-weight: 500;
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
 }
 
 /* Botões e controles: transições curtas por padrão */
@@ -117,4 +176,25 @@ textarea {
     border-color 120ms ease,
     color 120ms ease,
     opacity 120ms ease;
+}
+
+/* Seletores nativos no tema (a seta do sistema fica escura sobre fundo escuro) */
+select {
+  color-scheme: dark;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .star,
+  .brand-mark > span,
+  .animate-orbit,
+  .animate-orbit-slow,
+  .animate-pulsar,
+  .animate-drift,
+  .animate-drift-2,
+  .animate-rise,
+  .animate-fade-up,
+  .animate-slide-in-right,
+  .animate-pulse-dot {
+    animation: none !important;
+  }
 }

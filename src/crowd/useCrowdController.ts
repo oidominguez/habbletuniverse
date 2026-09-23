@@ -6,7 +6,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AddonConfigMap } from '../../shared/addon-config';
-import type { CaptchaSolverProvider, CaptchaSolverSettings, CrowdAccount, CrowdNetworkSettings, TorSettings, TorStatus, TrafficReport } from '../../shared/crowd';
+import type { CaptchaSolverProvider, CaptchaSolverSettings, CrowdAccount, CrowdNetworkSettings, ProxyPoolEntry, ProxyPoolStatus, TorSettings, TorStatus, TrafficReport } from '../../shared/crowd';
 import { defaultCrowdNetworkSettings } from '../../shared/crowd';
 import type { FurniCatalog, WallCatalog } from '../../shared/furnidata';
 import type { CrowdPanelProps } from '../components/CrowdPanel';
@@ -77,6 +77,7 @@ export function useCrowdController(o: CrowdControllerOptions): CrowdController {
   const [tor, setTor] = useState(DEFAULT_TOR);
   const [network, setNetwork] = useState<CrowdNetworkSettings>(defaultCrowdNetworkSettings);
   const [traffic, setTraffic] = useState<TrafficReport[]>([]);
+  const [proxies, setProxies] = useState<ProxyPoolEntry[]>([]);
   const [tilesRect, setTilesRect] = useState<TilesRect | null>(null);
   const tilesObserverRef = useRef<ResizeObserver | null>(null);
   const tilesElRef = useRef<HTMLDivElement | null>(null);
@@ -100,6 +101,7 @@ export function useCrowdController(o: CrowdControllerOptions): CrowdController {
     api.getSolver().then((s) => { if (alive) setSolver(s); }).catch(() => {});
     api.getTor().then((t) => { if (alive) setTor(t); }).catch(() => {});
     api.getNetwork().then((n) => { if (alive) setNetwork(n); }).catch(() => {});
+    api.listProxies().then((l) => { if (alive) setProxies(l); }).catch(() => {});
     return () => { alive = false; };
   }, [crowd]);
 
@@ -285,6 +287,100 @@ export function useCrowdController(o: CrowdControllerOptions): CrowdController {
     showToast(`${n} proxy(s) atribuído(s). Reconecte as contas para aplicar.`);
   }, [accounts, refreshAccounts, showToast]);
 
+  /* ------------------------------ pool de proxies ------------------------------ */
+  const refreshProxies = useCallback(async () => {
+    try { setProxies(await window.habblet.crowd.listProxies()); } catch { /* fora do Electron */ }
+  }, []);
+  const onAddProxies = useCallback(async (text: string) => {
+    try {
+      const r = await window.habblet.crowd.addProxies(text);
+      await refreshProxies();
+      const parts = [`${r.added.length} proxy(s) adicionado(s) ao pool`];
+      if (r.existing) parts.push(`${r.existing} já estavam`);
+      if (r.duplicates) parts.push(`${r.duplicates} repetido(s) no texto`);
+      if (r.invalid.length) parts.push(`${r.invalid.length} inválido(s)`);
+      showToast(parts.join(' · '));
+      for (const inv of r.invalid.slice(0, 5)) log(`[multidão] pool: linha inválida "${inv.line}": ${inv.error}`);
+    } catch (e) {
+      showToast(cleanErr(e));
+    }
+  }, [refreshProxies, showToast, log]);
+  const onRemoveProxy = useCallback(async (id: string) => {
+    try {
+      await window.habblet.crowd.removeProxy(id);
+      await Promise.all([refreshProxies(), refreshAccounts()]);
+    } catch (e) {
+      showToast(cleanErr(e));
+    }
+  }, [refreshProxies, refreshAccounts, showToast]);
+  const onSetProxyStatus = useCallback(async (id: string, status: ProxyPoolStatus, note?: string) => {
+    try {
+      await window.habblet.crowd.updateProxy(id, { status, note: note ?? null });
+      await refreshProxies();
+    } catch (e) {
+      showToast(cleanErr(e));
+    }
+  }, [refreshProxies, showToast]);
+  const onSetProxyLabel = useCallback(async (id: string, label: string) => {
+    try {
+      await window.habblet.crowd.updateProxy(id, { label });
+      await refreshProxies();
+    } catch (e) {
+      showToast(cleanErr(e));
+    }
+  }, [refreshProxies, showToast]);
+  const onTestPoolProxy = useCallback(async (id: string) => {
+    const r = await window.habblet.crowd.testPoolProxy(id);
+    await refreshProxies();
+    showToast(r.ok ? `IP de saída: ${r.ip}` : r.error);
+    return r;
+  }, [refreshProxies, showToast]);
+  /** Escolhe (ou tira, com null) o item do pool que a conta usa. Vale na próxima conexão. */
+  const onAssignProxy = useCallback(async (accountId: string, proxyId: string | null) => {
+    try {
+      await window.habblet.crowd.update(accountId, { proxyId });
+      await refreshAccounts();
+      const connected = snap.sessions.some((s) => s.id === accountId);
+      showToast(proxyId ? (connected ? 'Proxy escolhido. Reconecte a conta para aplicar.' : 'Proxy escolhido para a próxima conexão.') : (connected ? 'Conta fora do pool. Reconecte para aplicar.' : 'Conta fora do pool.'));
+    } catch (e) {
+      showToast(cleanErr(e));
+    }
+  }, [refreshAccounts, showToast, snap.sessions]);
+  /** Dá um proxy livre do pool (não bloqueado, não usado por outra conta) a cada conta sem proxy, em ordem. */
+  const onAutoAssignProxies = useCallback(async () => {
+    const used = new Set(accounts.map((a) => a.proxyId).filter((x): x is string => !!x));
+    const free = proxies.filter((p) => p.status !== 'blocked' && p.status !== 'error' && !used.has(p.id));
+    const targets = accounts.filter((a) => !a.proxyId && !a.hasOwnProxy);
+    let n = 0;
+    for (let i = 0; i < Math.min(free.length, targets.length); i++) {
+      try { await window.habblet.crowd.update(targets[i].id, { proxyId: free[i].id }); n++; } catch { /* segue */ }
+    }
+    await refreshAccounts();
+    showToast(n === 0
+      ? (targets.length === 0 ? 'Todas as contas já têm proxy.' : 'Nenhum proxy livre no pool (todos em uso, bloqueados ou com erro).')
+      : `${n} conta(s) receberam um proxy do pool. Reconecte para aplicar.`);
+  }, [accounts, proxies, refreshAccounts, showToast]);
+
+  // O pool aprende com o uso: conta online = proxy ok; site recusou o login (anti-VPN) = proxy bloqueado;
+  // não deu para sair pelo proxy = erro. Só para contas que usam um item do pool.
+  const accountsRef = useRef(accounts);
+  useEffect(() => { accountsRef.current = accounts; }, [accounts]);
+  useEffect(() => {
+    const api = window.habblet?.crowd;
+    if (!api) return;
+    crowd.setStatusListener((accountId, status, detail) => {
+      const proxyId = accountsRef.current.find((a) => a.id === accountId)?.proxyId;
+      if (!proxyId) return;
+      let patch: { status: ProxyPoolStatus; note: string | null } | null = null;
+      if (status === 'online') patch = { status: 'ok', note: null };
+      else if (status === 'error' && /login recusado/i.test(detail)) patch = { status: 'blocked', note: detail.replace(/^login recusado:\s*/i, '').slice(0, 160) };
+      else if (status === 'error' && /proxy/i.test(detail)) patch = { status: 'error', note: detail.slice(0, 160) };
+      if (!patch) return;
+      api.updateProxy(proxyId, patch).then(() => refreshProxies()).catch(() => {});
+    });
+    return () => crowd.setStatusListener(null);
+  }, [crowd, refreshProxies]);
+
   /* ------------------------------ tela única ------------------------------ */
   const ids = snap.connectedIds;
   const viewId = useMemo(() => {
@@ -358,6 +454,14 @@ export function useCrowdController(o: CrowdControllerOptions): CrowdController {
     onSetProxy,
     onTestProxy,
     onDistributeProxies,
+    proxies,
+    onAddProxies,
+    onRemoveProxy,
+    onSetProxyStatus,
+    onSetProxyLabel,
+    onTestPoolProxy,
+    onAssignProxy,
+    onAutoAssignProxies,
     solver,
     onSetSolver,
     tor: tor.settings,

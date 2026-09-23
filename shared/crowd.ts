@@ -11,8 +11,15 @@ export interface CrowdAccount {
   createdAt: number;
   /** Conectar automaticamente ao abrir o app. */
   autoConnect: boolean;
-  /** Proxy da conta, sem credenciais (ex.: `socks5://1.2.3.4:1080 (auth)`); null = conexão direta. */
+  /**
+   * Proxy efetivo da conta, sem credenciais (ex.: `socks5://1.2.3.4:1080 (auth)`); null = conexão direta.
+   * Vem do item do pool escolhido (`proxyId`) ou, sem ele, do proxy próprio digitado na conta.
+   */
   proxy: string | null;
+  /** Item do pool de proxies que esta conta usa; null = não usa o pool (proxy próprio ou IP real). */
+  proxyId: string | null;
+  /** A conta tem um proxy próprio digitado (fora do pool). */
+  hasOwnProxy: boolean;
 }
 
 export interface CrowdAccountInput {
@@ -28,8 +35,51 @@ export interface CrowdAccountPatch {
   password?: string;
   label?: string;
   autoConnect?: boolean;
-  /** URL completa do proxy; string vazia remove. */
+  /** URL completa do proxy próprio; string vazia remove. */
   proxy?: string;
+  /** Item do pool a usar; null tira a conta do pool (volta ao proxy próprio, se houver, ou ao IP real). */
+  proxyId?: string | null;
+}
+
+/* ------------------------------------ pool de proxies ------------------------------------ */
+
+/**
+ * O que se sabe de um proxy do pool pelo uso: `ok` = uma conta autenticou por ele; `blocked` = o site recusou
+ * o login (anti-VPN) ou você marcou à mão; `error` = não deu para sair por ele (host, porta, senha).
+ */
+export type ProxyPoolStatus = 'unknown' | 'ok' | 'blocked' | 'error';
+
+/** Item do pool como o renderer o vê: sem credenciais. */
+export interface ProxyPoolEntry {
+  id: string;
+  /** `host:porta` (sem usuário nem senha). */
+  display: string;
+  /** Descrição com esquema, sem credenciais (`http://host:porta (auth)`). */
+  description: string;
+  label: string;
+  createdAt: number;
+  status: ProxyPoolStatus;
+  statusAt: number | null;
+  /** Motivo do último status (mensagem do site, erro de rede…). */
+  note: string | null;
+  /** Último IP de saída visto (teste ou conta). */
+  lastIp: string | null;
+}
+
+export interface ProxyPoolAddResult {
+  added: ProxyPoolEntry[];
+  /** Já existiam no pool (mesma identidade). */
+  existing: number;
+  /** Repetidas dentro do próprio texto colado. */
+  duplicates: number;
+  invalid: { line: string; error: string }[];
+}
+
+export interface ProxyPoolPatch {
+  label?: string;
+  status?: ProxyPoolStatus;
+  note?: string | null;
+  lastIp?: string | null;
 }
 
 /** `via` diz por onde o teste saiu: pelo proxy da conta (o IP que o jogo vê) ou direto (sem proxy = IP real). */

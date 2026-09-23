@@ -13,7 +13,8 @@ const RENDERER_CSP = [
   "default-src 'self'",
   "script-src 'self'",
   "style-src 'self' 'unsafe-inline'", // Tailwind gera classes em arquivo; 'unsafe-inline' cobre atributos style={} do React
-  "img-src 'self' data:",
+  // Fotos dos avatares: imaging do hotel (pelo código do visual) e imager do fansite (pelo nick).
+  "img-src 'self' data: https://imaging.habblet.city https://api.radiohabblet.com.br",
   "font-src 'self' data:",
   "connect-src 'self'",
   "object-src 'none'",

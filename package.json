@@ -3,8 +3,8 @@
   "version": "1.0.0",
   "private": true,
   "main": "dist-electron/electron/main.js",
-  "author": "Habblet AddAll",
-  "description": "Cliente/launcher para o Habblet (Electron + React) que intercepta o protocolo do jogo: addons por protocolo, aba Jogo, sniffer e controle de várias contas",
+  "author": "Universe",
+  "description": "Universe: cliente/launcher para o Habblet (Electron + React) que intercepta o protocolo do jogo: addons por protocolo, sala por protocolo, sniffer e controle de várias contas",
   "overrides": {
     "tar": ">=7.5.3",
     "esbuild": ">=0.25.0"
@@ -34,7 +34,7 @@
   },
   "build": {
     "appId": "com.habblet.addall",
-    "productName": "Habblet AddAll",
+    "productName": "Universe",
     "directories": {
       "output": "release"
     },
@@ -66,11 +66,13 @@
         "pt_BR",
         "en_US"
       ],
-      "shortcutName": "Habblet AddAll"
+      "shortcutName": "Universe"
     }
   },
   "dependencies": {
     "@fontsource-variable/inter": "^5.3.0",
+    "@fontsource-variable/manrope": "^5.3.0",
+    "@fontsource-variable/space-grotesk": "^5.3.0",
     "@fontsource/jetbrains-mono": "^5.3.0",
     "electron-store": "^8.2.0",
     "https-proxy-agent": "^7.0.6",

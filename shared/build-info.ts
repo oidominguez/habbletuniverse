@@ -7,10 +7,10 @@
  */
 
 /** Momento da compilação, em ISO (UTC). */
-export const BUILD_TIME = '2026-09-21T14:55:13.430Z';
+export const BUILD_TIME = '2026-09-23T10:13:46.480Z';
 
-/** Etiqueta curta no fuso local, do jeito que aparece na interface: `21/09 11:55`. */
-export const BUILD_LABEL = '21/09 11:55';
+/** Etiqueta curta no fuso local, do jeito que aparece na interface: `23/09 07:13`. */
+export const BUILD_LABEL = '23/09 07:13';
 
 /** `dev` = Vite com recarga; `build` = empacotado (dist / release). */
 export const BUILD_MODE: 'dev' | 'build' = 'build';

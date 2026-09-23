@@ -12,6 +12,7 @@
     "vitest.config.ts",
     "electron/crowd-proxy.ts",
     "electron/headless-protocol.ts",
-    "electron/proxy-url.ts"
+    "electron/proxy-url.ts",
+    "electron/proxy-pool.ts"
   ]
 }

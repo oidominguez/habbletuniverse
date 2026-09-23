@@ -26,7 +26,7 @@ let mainWindow: BrowserWindow | null = null;
  * relance qual build está aberto sem entrar no app. `dev` = Vite; a data é a da compilação.
  */
 function windowTitle(): string {
-  return `Habblet AddAll · ${BUILD_MODE === 'dev' ? 'dev' : 'build'} ${BUILD_LABEL}`;
+  return `Universe · ${BUILD_MODE === 'dev' ? 'dev' : 'build'} ${BUILD_LABEL}`;
 }
 
 /** Só deixamos abrir externamente URLs http(s); nada de file:, javascript: etc. */
@@ -141,12 +141,30 @@ function createWindow() {
     if (saved.maximized || !saved.bounds) mainWindow.maximize();
     mainWindow.show();
     rememberWindowState(mainWindow);
+    // HABBLET_SCREENSHOT=<arquivo.png>: instância de teste tira uma captura da janela depois de alguns
+    // segundos e fecha (com HABBLET_SCREENSHOT_DELAY_MS para páginas lentas). Só diagnóstico visual.
+    const shot = process.env.HABBLET_SCREENSHOT;
+    if (shot) {
+      const delay = parseInt(process.env.HABBLET_SCREENSHOT_DELAY_MS ?? '', 10) || 5000;
+      setTimeout(async () => {
+        try {
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            const img = await mainWindow.webContents.capturePage();
+            await fs.promises.writeFile(shot, img.toPNG());
+            appLog('app', `captura salva em ${shot}`);
+          }
+        } catch (e) {
+          appLog('app', `captura falhou: ${e instanceof Error ? e.message : String(e)}`);
+        }
+        app.quit();
+      }, delay);
+    }
     const open = process.env.HABBLET_OPEN;
     if (open) {
       // Reenvia algumas vezes: o renderer pode ainda não ter registrado o listener no primeiro disparo.
-      const key = open === 'dock' ? 'j' : open.startsWith('addons') ? 'open:' + open.slice('addons:'.length) : open.startsWith('tab:') ? open : null;
+      const key = open === 'dock' ? 'j' : open === 'palette' ? 'k' : open.startsWith('addons') ? 'open:' + open.slice('addons:'.length) : open.startsWith('tab:') ? open : null;
       if (key) {
-        for (const delay of key === 'j' ? [2000] : [1500, 3500, 6000]) {
+        for (const delay of key === 'j' || key === 'k' ? [2000] : [1500, 3500, 6000]) {
           setTimeout(() => {
             if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(IPC.APP_SHORTCUT, key);
           }, delay);
@@ -161,14 +179,14 @@ function createWindow() {
 
 /* ------------------------------ Perfis (exportar/importar) ------------------------------ */
 
-const PROFILE_FILTERS = [{ name: 'Perfil Habblet AddAll', extensions: ['json'] }];
+const PROFILE_FILTERS = [{ name: 'Perfil Universe', extensions: ['json'] }];
 
 async function exportProfile(): Promise<ProfileFileResult> {
   const win = mainWindow ?? undefined;
   const stamp = new Date().toISOString().slice(0, 10);
   const { canceled, filePath } = await dialog.showSaveDialog(win!, {
     title: 'Exportar perfil de configurações',
-    defaultPath: `habblet-addall-perfil-${stamp}.json`,
+    defaultPath: `universe-perfil-${stamp}.json`,
     filters: PROFILE_FILTERS,
   });
   if (canceled || !filePath) return { ok: false, cancelled: true };
@@ -194,7 +212,7 @@ async function importProfile(): Promise<ProfileFileResult> {
     const raw = await fs.promises.readFile(filePath, 'utf8');
     const parsed: unknown = JSON.parse(raw);
     if (typeof parsed !== 'object' || parsed === null || !('addons' in parsed)) {
-      return { ok: false, cancelled: false, error: 'O arquivo não parece ser um perfil do Habblet AddAll.' };
+      return { ok: false, cancelled: false, error: 'O arquivo não parece ser um perfil do Universe.' };
     }
     // Um perfil traz só configuração (addons + layout). Ativação dos addons e última URL são estado
     // de execução e ficam como estão.
